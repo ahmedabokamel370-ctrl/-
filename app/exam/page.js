@@ -1,410 +1,297 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
-import { 
-    Clock, CheckCircle2, XCircle, Trophy, Sparkles, 
-    ArrowRight, Send, User, Key, HelpCircle, RotateCcw, ShieldCheck
-} from 'lucide-react';
+
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 
-export default function StudentExamPage() {
-    // 1. حالات التناقل بين مراحل الامتحان (login -> taking -> result)
-    const [step, setStep] = useState('login'); // 'login' | 'taking' | 'result'
+export default function StudentPage() {
+  const [step, setStep] = useState('login');
 
-    // 2. مدخلات الطالب والدخول
-    const [pin, setPin] = useState('');
-    const [studentName, setStudentName] = useState('');
-    const [error, setError] = useState('');
+  const [pin, setPin] = useState('');
+  const [studentName, setStudentName] = useState('');
+  const [examData, setExamData] = useState(null);
 
-    // 3. بيانات الامتحان النشط والإجابات
-    const [exam, setExam] = useState(null);
-    const [userAnswers, setUserAnswers] = useState({}); // { 0: 2, 1: 0, ... }
-    
-    // 4. العداد الزمني بالثواني
-    const [timeLeft, setTimeLeft] = useState(0);
-    const [timeSpent, setTimeSpent] = useState(0);
-    const timerRef = useRef(null);
+  const [userAnswers, setUserAnswers] = useState({});
+  const [timeLeft, setTimeLeft] = useState(0);
+  const [isTimeUp, setIsTimeUp] = useState(false);
 
-    // 5. النتيجة والتقدير النهائي
-    const [score, setScore] = useState(0);
+  const [result, setResult] = useState({ score: 0, total: 0 });
 
-    // إدارة العداد التنازلي عند بدء الامتحان
-    useEffect(() => {
-        if (step === 'taking' && timeLeft > 0) {
-            timerRef.current = setInterval(() => {
-                setTimeLeft((prevTime) => {
-                    if (prevTime <= 1) {
-                        clearInterval(timerRef.current);
-                        handleSubmitExam(); // إنهاء تلقائي عند انتهاء الوقت
-                        return 0;
-                    }
-                    return prevTime - 1;
-                });
-                setTimeSpent((prevSpent) => prevSpent + 1);
-            }, 1000);
+  const handleSubmitExam = useCallback(
+    (forcedByTimer = false) => {
+      if (!examData) return;
+
+      let calculatedScore = 0;
+      examData.questions.forEach((q, index) => {
+        if (userAnswers[index] === q.correctOption) {
+          calculatedScore += 1;
         }
+      });
 
-        return () => clearInterval(timerRef.current);
-    }, [step, timeLeft]);
+      const totalQuestions = examData.questions.length;
+      setResult({ score: calculatedScore, total: totalQuestions });
 
-    // تسجيل دخول الطالب وبدء الامتحان
-    const handleStartExam = (e) => {
-        e.preventDefault();
-        setError('');
-
-        if (!studentName.trim()) {
-            setError('يرجى إدخال اسمك الثلاثي للبدء.');
-            return;
-        }
-
-        if (!pin.trim()) {
-            setError('يرجى إدخال كود الـ PIN الخا بالامتحان.');
-            return;
-        }
-
-        // جلب الامتحانات المتاحة من الذاكرة المحلية
-        const savedExams = JSON.parse(localStorage.getItem('my_edu_exams') || '[]');
-        const foundExam = savedExams.find((ex) => ex.pin.toUpperCase() === pin.trim().toUpperCase());
-
-        if (!foundExam) {
-            setError('كود الـ PIN غير صحيح أو أن الامتحان غير موجود.');
-            return;
-        }
-
-        // تهيئة بيانات الامتحان
-        setExam(foundExam);
-        setTimeLeft((foundExam.durationMinutes || 15) * 60);
-        setTimeSpent(0);
-        setUserAnswers({});
-        setStep('taking');
-    };
-
-    // اختيار إجابة لكل سؤال
-    const handleSelectOption = (qIndex, optionIndex) => {
-        setUserAnswers({
-            ...userAnswers,
-            [qIndex]: optionIndex,
-        });
-    };
-
-    // إنهاء الامتحان والتصحيح وتسجيل النتيجة
-    const handleSubmitExam = () => {
-        if (step === 'result') return; // منع التكرار
-
-        clearInterval(timerRef.current);
-
-        if (!exam) return;
-
-        // حساب الدرجة النهائية
-        let calculatedScore = 0;
-        exam.questions.forEach((q, index) => {
-            if (userAnswers[index] === q.correctOption) {
-                calculatedScore += 1;
-            }
-        });
-
-        setScore(calculatedScore);
-
-        // حفظ النتيجة في الذاكرة المحلية لتحديث لوحة الأوائل
-        const newResultRecord = {
-            studentName: studentName.trim(),
-            score: calculatedScore,
-            totalQuestions: exam.questions.length,
-            timeSpentSeconds: timeSpent,
-            submittedAt: new Date().toISOString(),
+      if (typeof window !== 'undefined') {
+        const storedScores = JSON.parse(
+          localStorage.getItem('exam_scores') || '[]'
+        );
+        const newRecord = {
+          name: studentName,
+          pin: pin,
+          score: calculatedScore,
+          total: totalQuestions,
+          time: new Date().toLocaleTimeString('ar-EG', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
         };
+        localStorage.setItem(
+          'exam_scores',
+          JSON.stringify([newRecord, ...storedScores])
+        );
+      }
 
-        const savedExams = JSON.parse(localStorage.getItem('my_edu_exams') || '[]');
-        const updatedExams = savedExams.map((ex) => {
-            if (ex.pin === exam.pin) {
-                const existingResults = ex.results || [];
-                return {
-                    ...ex,
-                    results: [...existingResults, newResultRecord],
-                };
-            }
-            return ex;
-        });
+      if (forcedByTimer) {
+        setIsTimeUp(true);
+      }
 
-        localStorage.setItem('my_edu_exams', JSON.stringify(updatedExams));
-        setStep('result');
-    };
+      setStep('result');
+    },
+    [examData, userAnswers, studentName, pin]
+  );
 
-    // تنسيق الوقت المتبقي (دقيقة : ثانية)
-    const formatTime = (seconds) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    };
+  useEffect(() => {
+    if (step !== 'exam' || timeLeft <= 0) return;
 
-    return (
-        <div className="min-h-screen bg-slate-900 text-white p-4 sm:p-6" dir="rtl">
-            {/* الهيدر العلوي */}
-            <header className="max-w-4xl w-full mx-auto flex justify-between items-center py-4 mb-6 border-b border-slate-800">
-                <Link href="/" className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors text-sm">
-                    <ArrowRight size={18} />
-                    <span>الرئيسية</span>
-                </Link>
-                <div className="flex items-center gap-2 text-emerald-400 font-bold text-lg">
-                    <Sparkles size={22} />
-                    <span>منظومة الاختبار التفاعلية</span>
-                </div>
-            </header>
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleSubmitExam(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
 
-            <main className="max-w-3xl mx-auto">
-                {/* ----------------- الشاشة الأولى: دخول الطالب ----------------- */}
-                {step === 'login' && (
-                    <div className="bg-slate-800/90 border border-slate-700/80 rounded-3xl p-6 sm:p-10 shadow-2xl space-y-6 max-w-md mx-auto">
-                        <div className="text-center space-y-2">
-                            <div className="w-14 h-14 bg-emerald-500/10 text-emerald-400 rounded-2xl flex items-center justify-center mx-auto border border-emerald-500/20">
-                                <Key size={28} />
-                            </div>
-                            <h1 className="text-xl font-bold text-white">دخول الامتحان بالـ PIN</h1>
-                            <p className="text-xs text-gray-400">أدخل اسمك وكود الامتحان المزود من المعلم للبدء</p>
-                        </div>
+    return () => clearInterval(timer);
+  }, [step, timeLeft, handleSubmitExam]);
 
-                        <form onSubmit={handleStartExam} className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-semibold text-gray-300 mb-1.5 flex items-center gap-1.5">
-                                    <User size={14} className="text-emerald-400" />
-                                    <span>اسم الطالب الثلاثي</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="مثال: أحمد محمد علي"
-                                    value={studentName}
-                                    onChange={(e) => setStudentName(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 text-xs"
-                                />
-                            </div>
+  const handleStartExam = (e) => {
+    e.preventDefault();
+    if (!studentName.trim()) return alert('يرجى كتابة اسمك الثلاثي');
+    if (!pin.trim()) return alert('يرجى إدخال رمز PIN الخاص بالامتحان');
 
-                            <div>
-                                <label className="block text-xs font-semibold text-gray-300 mb-1.5 flex items-center gap-1.5">
-                                    <Key size={14} className="text-emerald-400" />
-                                    <span>كود الـ PIN الخاص بالامتحان</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="EXAM-1234"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 text-xs tracking-wider uppercase font-mono"
-                                />
-                            </div>
+    if (typeof window !== 'undefined') {
+      const savedExam = localStorage.getItem(`exam_${pin.trim()}`);
+      if (!savedExam) {
+        return alert('لم يتم العثور على امتحان بهذا الرمز!');
+      }
 
-                            {error && (
-                                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs text-center">
-                                    {error}
-                                </div>
-                            )}
+      try {
+        const parsedExam = JSON.parse(savedExam);
+        if (!parsedExam.questions || parsedExam.questions.length === 0) {
+          return alert('هذا الامتحان لا يحتوي على أسئلة بعد!');
+        }
 
-                            <button
-                                type="submit"
-                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg shadow-emerald-600/20 active:scale-[0.98] text-xs flex items-center justify-center gap-2 mt-2"
-                            >
-                                <span>بدء الاختبار الآن</span>
-                                <ArrowRight size={16} className="rotate-180" />
-                            </button>
-                        </form>
-                    </div>
-                )}
+        setExamData(parsedExam);
+        const durationInMinutes = parsedExam.duration || 10;
+        setTimeLeft(durationInMinutes * 60);
+        setUserAnswers({});
+        setStep('exam');
+      } catch {
+        alert('حدث خطأ أثناء قراءة بيانات الامتحان.');
+      }
+    }
+  };
 
-                {/* ----------------- الشاشة الثانية: أداء الامتحان والعداد ----------------- */}
-                {step === 'taking' && exam && (
-                    <div className="space-y-6">
-                        {/* شريط معلومات الامتحان والعداد */}
-                        <div className="bg-slate-800/90 border border-slate-700/80 rounded-2xl p-4 flex justify-between items-center sticky top-4 z-10 shadow-xl backdrop-blur-md">
-                            <div>
-                                <h2 className="font-bold text-sm text-white">{exam.topic}</h2>
-                                <p className="text-[11px] text-gray-400">الطالب: {studentName}</p>
-                            </div>
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
 
-                            {/* العداد التنازلي */}
-                            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-bold font-mono ${
-                                timeLeft < 180 
-                                    ? 'bg-red-500/20 border-red-500/50 text-red-400 animate-pulse' 
-                                    : 'bg-slate-900 border-slate-700 text-emerald-400'
-                            }`}>
-                                <Clock size={18} />
-                                <span>{formatTime(timeLeft)}</span>
-                            </div>
-                        </div>
+  const handleOptionSelect = (questionIndex, optionIndex) => {
+    setUserAnswers((prev) => ({
+      ...prev,
+      [questionIndex]: optionIndex,
+    }));
+  };
 
-                        {/* أسئلة الامتحان */}
-                        <div className="space-y-5">
-                            {exam.questions.map((q, qIndex) => (
-                                <div key={q.id || qIndex} className="bg-slate-800/80 border border-slate-700/80 rounded-3xl p-6 space-y-4 shadow-lg">
-                                    <div className="flex items-start gap-3">
-                                        <span className="bg-emerald-500/20 text-emerald-400 font-bold text-xs px-3 py-1 rounded-lg shrink-0">
-                                            س {qIndex + 1}
-                                        </span>
-                                        <h3 className="font-semibold text-sm text-white leading-relaxed pt-0.5">
-                                            {q.questionText}
-                                        </h3>
-                                    </div>
+  return (
+    <div className="min-h-screen bg-[#0B0F19] text-white flex flex-col justify-between p-4 md:p-8 font-sans" dir="rtl">
+      
+      {/* 1. شاشة الدخول */}
+      {step === 'login' && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-full max-w-md bg-[#131B2E] p-8 rounded-2xl border border-gray-800 text-center space-y-6 shadow-2xl">
+            <div className="w-16 h-16 bg-blue-600/20 text-blue-400 rounded-2xl flex items-center justify-center mx-auto text-3xl border border-blue-500/30">
+              🎓
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">منصة الاختبارات الإلكترونية</h1>
+              <p className="text-gray-400 text-xs mt-1">أدخل اسمك ورمز PIN للبدء</p>
+            </div>
 
-                                    {/* الخيارات */}
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                                        {q.options.map((option, oIndex) => {
-                                            const isSelected = userAnswers[qIndex] === oIndex;
-                                            return (
-                                                <button
-                                                    key={oIndex}
-                                                    type="button"
-                                                    onClick={() => handleSelectOption(qIndex, oIndex)}
-                                                    className={`p-3.5 rounded-2xl border text-right transition-all flex items-center justify-between text-xs ${
-                                                        isSelected
-                                                            ? 'bg-emerald-600/20 border-emerald-500 text-white font-semibold shadow-md'
-                                                            : 'bg-slate-900/60 border-slate-700/60 text-gray-300 hover:bg-slate-700/50'
-                                                    }`}
-                                                >
-                                                    <span>{option}</span>
-                                                    <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
-                                                        isSelected ? 'border-emerald-400 bg-emerald-500' : 'border-slate-600'
-                                                    }`}>
-                                                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-slate-900" />}
-                                                    </div>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+            <form onSubmit={handleStartExam} className="space-y-4">
+              <div>
+                <label className="block text-right text-xs text-gray-400 mb-1">اسم الطالب الثلاثي:</label>
+                <input
+                  type="text"
+                  placeholder="مثال: أحمد محمد علي"
+                  value={studentName}
+                  onChange={(e) => setStudentName(e.target.value)}
+                  className="w-full p-3 bg-[#0B0F19] border border-gray-700 rounded-xl text-white focus:outline-none focus:border-blue-500 text-sm"
+                  required
+                />
+              </div>
 
-                        {/* زر التسليم */}
-                        <div className="pt-4">
-                            <button
-                                type="button"
-                                onClick={handleSubmitExam}
-                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 rounded-2xl transition-all shadow-xl shadow-emerald-600/20 active:scale-[0.98] text-sm flex items-center justify-center gap-2"
-                            >
-                                <Send size={18} />
-                                <span>تسليم وتصحيح الامتحان النهائي</span>
-                            </button>
-                        </div>
-                    </div>
-                )}
+              <div>
+                <label className="block text-right text-xs text-gray-400 mb-1">رمز PIN للامتحان:</label>
+                <input
+                  type="text"
+                  placeholder="أدخل الرمز (مثال: 1234)"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  className="w-full p-3 bg-[#0B0F19] border border-gray-700 rounded-xl text-center text-blue-400 font-mono font-bold text-lg focus:outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
 
-                {/* ----------------- الشاشة الثالثة: النتيجة ومراجعة الأخطاء ----------------- */}
-                {step === 'result' && exam && (
-                    <div className="space-y-6 animate-fade-in">
-                        {/* كارت النتيجة العلوية */}
-                        <div className="bg-slate-800/90 border border-slate-700 rounded-3xl p-8 text-center space-y-4 shadow-2xl relative overflow-hidden">
-                            <div className="w-20 h-20 bg-amber-500/10 text-amber-400 rounded-3xl flex items-center justify-center mx-auto border border-amber-500/20">
-                                <Trophy size={40} />
-                            </div>
+              <button
+                type="submit"
+                className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 font-bold rounded-xl text-sm transition shadow-lg shadow-blue-600/30"
+              >
+                🚀 دخول الامتحان
+              </button>
+            </form>
 
-                            <div className="space-y-1">
-                                <span className="text-xs text-gray-400">نتيجة الطالب: {studentName}</span>
-                                <h2 className="text-2xl font-bold text-white">{exam.topic}</h2>
-                            </div>
-
-                            <div className="flex justify-center items-baseline gap-2 pt-2">
-                                <span className="text-5xl font-black text-emerald-400">{score}</span>
-                                <span className="text-xl text-gray-400 font-bold">/ {exam.questions.length}</span>
-                            </div>
-
-                            <p className="text-xs text-gray-400">
-                                الوقت المستغرق: <strong className="text-white">{Math.floor(timeSpent / 60)} دقيقة و {timeSpent % 60} ثانية</strong>
-                            </p>
-
-                            <div className="p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-300 text-xs font-semibold flex items-center justify-center gap-2 max-w-sm mx-auto">
-                                <ShieldCheck size={18} />
-                                <span>تم تسجيل منطقتك في لوحة أوائل المعلم بنجاح!</span>
-                            </div>
-                        </div>
-
-                        {/* مراجعة الأسئلة وتبيان الخطأ والصواب */}
-                        <div className="space-y-4">
-                            <h3 className="font-bold text-sm text-white px-2 flex items-center gap-2">
-                                <HelpCircle size={18} className="text-blue-400" />
-                                <span>مراجعة الإجابات ونموذج الشرح</span>
-                            </h3>
-
-                            {exam.questions.map((q, qIndex) => {
-                                const studentAns = userAnswers[qIndex];
-                                const isCorrect = studentAns === q.correctOption;
-
-                                return (
-                                    <div
-                                        key={qIndex}
-                                        className={`border rounded-3xl p-6 space-y-4 shadow-lg ${
-                                            isCorrect
-                                                ? 'bg-slate-800/80 border-emerald-500/30'
-                                                : 'bg-slate-800/80 border-red-500/30'
-                                        }`}
-                                    >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="flex items-start gap-3">
-                                                <span className={`font-bold text-xs px-3 py-1 rounded-lg shrink-0 ${
-                                                    isCorrect ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                                                }`}>
-                                                    س {qIndex + 1}
-                                                </span>
-                                                <h4 className="font-semibold text-sm text-white leading-relaxed pt-0.5">
-                                                    {q.questionText}
-                                                </h4>
-                                            </div>
-                                            {isCorrect ? (
-                                                <span className="flex items-center gap-1 text-xs text-emerald-400 font-bold shrink-0 bg-emerald-500/10 px-3 py-1 rounded-full">
-                                                    <CheckCircle2 size={16} /> صحيح
-                                                </span>
-                                            ) : (
-                                                <span className="flex items-center gap-1 text-xs text-red-400 font-bold shrink-0 bg-red-500/10 px-3 py-1 rounded-full">
-                                                    <XCircle size={16} /> خاطئ
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* الخيارات والتحديد */}
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
-                                            {q.options.map((opt, oIndex) => {
-                                                const isUserChoice = studentAns === oIndex;
-                                                const isCorrectChoice = q.correctOption === oIndex;
-
-                                                let style = 'bg-slate-900/40 border-slate-700/50 text-gray-400';
-                                                if (isCorrectChoice) {
-                                                    style = 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 font-bold';
-                                                } else if (isUserChoice && !isCorrect) {
-                                                    style = 'bg-red-500/20 border-red-500/60 text-red-300 font-bold';
-                                                }
-
-                                                return (
-                                                    <div key={oIndex} className={`p-3 rounded-xl border text-xs flex justify-between items-center ${style}`}>
-                                                        <span>{opt}</span>
-                                                        {isCorrectChoice && <span className="text-[10px] bg-emerald-500/30 px-2 py-0.5 rounded text-emerald-200">الإجابة الصحيحة</span>}
-                                                        {isUserChoice && !isCorrectChoice && <span className="text-[10px] bg-red-500/30 px-2 py-0.5 rounded text-red-200">إجابتك</span>}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-
-                                        {/* الشرح والتبسيط */}
-                                        {q.explanation && (
-                                            <div className="p-3.5 bg-slate-900/80 border border-slate-700/60 rounded-2xl text-xs text-gray-300 space-y-1">
-                                                <span className="text-blue-400 font-bold block text-[11px]">💡 التوضيح الشارح:</span>
-                                                <p className="leading-relaxed">{q.explanation}</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* العودة وإعادة المحاولة */}
-                        <div className="flex gap-4 pt-4">
-                            <button
-                                type="button"
-                                onClick={() => setStep('login')}
-                                className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-bold py-3.5 rounded-2xl transition-all text-xs flex items-center justify-center gap-2"
-                            >
-                                <RotateCcw size={16} />
-                                <span>أداء امتحان آخر</span>
-                            </button>
-                        </div>
-                    </div>
-                )}
-            </main>
+            <div className="pt-2 border-t border-gray-800">
+              <Link href="/" className="text-xs text-gray-400 hover:text-blue-400 font-semibold transition">
+                🏠 الصفحة الرئيسية
+              </Link>
+            </div>
+          </div>
         </div>
-    );
+      )}
+
+      {/* 2. شاشة تقديم الامتحان */}
+      {step === 'exam' && examData && (
+        <div className="flex-1 max-w-3xl mx-auto space-y-6 w-full">
+          <div className="sticky top-4 z-40 bg-[#131B2E]/90 backdrop-blur-md p-4 rounded-2xl border border-gray-800 flex items-center justify-between shadow-xl">
+            <div>
+              <h2 className="text-base font-bold text-white">{examData.title}</h2>
+              <p className="text-xs text-gray-400">الطالب: {studentName}</p>
+            </div>
+
+            <div className={`px-4 py-2 rounded-xl border flex items-center gap-2 ${timeLeft <= 60 ? 'bg-red-600/20 border-red-500 text-red-400 animate-pulse' : 'bg-[#0B0F19] border-gray-700 text-emerald-400'}`}>
+              <span className="text-xs text-gray-400">الوقت المتبقي:</span>
+              <span className="font-mono font-bold text-lg dir-ltr">⏱️ {formatTime(timeLeft)}</span>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {examData.questions.map((q, qIdx) => (
+              <div key={qIdx} className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs bg-blue-600/20 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-lg font-bold">
+                    سؤال {qIdx + 1} من {examData.questions.length}
+                  </span>
+                  {userAnswers[qIdx] !== undefined && (
+                    <span className="text-xs text-emerald-400 font-semibold">✓ تم الاختيار</span>
+                  )}
+                </div>
+
+                <p className="text-sm font-semibold text-white leading-relaxed">{q.text}</p>
+
+                <div className="space-y-2 pt-2">
+                  {q.options.map((opt, oIdx) => {
+                    const isSelected = userAnswers[qIdx] === oIdx;
+                    return (
+                      <button
+                        key={oIdx}
+                        onClick={() => handleOptionSelect(qIdx, oIdx)}
+                        className={`w-full text-right p-3.5 rounded-xl border text-xs font-medium transition flex items-center justify-between ${
+                          isSelected
+                            ? 'bg-blue-600/20 border-blue-500 text-white font-bold'
+                            : 'bg-[#0B0F19] border-gray-800 text-gray-300 hover:border-gray-700'
+                        }`}
+                      >
+                        <span>{opt}</span>
+                        <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? 'border-blue-400 bg-blue-500' : 'border-gray-600'}`}>
+                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white"></span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={() => {
+              if (confirm('هل أنت تأكد من أنك تريد إنهاء وتسليم الإجابات الآن؟')) {
+                handleSubmitExam(false);
+              }
+            }}
+            className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl text-sm transition shadow-lg shadow-emerald-600/20"
+          >
+            ✅ تسليم الامتحان الآن
+          </button>
+        </div>
+      )}
+
+      {/* 3. شاشة النتيجة النهائية */}
+      {step === 'result' && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-full max-w-md bg-[#131B2E] p-8 rounded-2xl border border-gray-800 text-center space-y-6 shadow-2xl">
+            {isTimeUp && (
+              <div className="bg-amber-500/20 border border-amber-500/40 text-amber-300 p-3 rounded-xl text-xs font-semibold">
+                ⚠️ انتهى الوقت المخصص للامتحان وتم التسليم تلقائياً!
+              </div>
+            )}
+
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto text-4xl border-2 ${result.score / result.total >= 0.5 ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 'bg-red-500/20 border-red-500 text-red-400'}`}>
+              {result.score / result.total >= 0.5 ? '🎉' : '😞'}
+            </div>
+
+            <div>
+              <h1 className="text-xl font-bold">نتيجة الاختبار</h1>
+              <p className="text-gray-400 text-xs mt-1">الطالب: <span className="text-white font-bold">{studentName}</span></p>
+            </div>
+
+            <div className="bg-[#0B0F19] p-6 rounded-2xl border border-gray-800 space-y-3">
+              <div className="text-3xl font-extrabold font-mono text-blue-400">
+                {result.score} / {result.total}
+              </div>
+              <div className="text-xs text-gray-400 font-semibold">
+                النسبة المئوية: <span className="font-bold text-emerald-400">{Math.round((result.score / result.total) * 100) || 0}%</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => setStep('login')}
+                className="w-full py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 font-bold rounded-xl text-xs transition"
+              >
+                🔄 تقديم امتحان آخر
+              </button>
+              <Link
+                href="/"
+                className="block w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition text-center"
+              >
+                🏠 الصفحة الرئيسية
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* التذييل */}
+      <footer className="py-6 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1">
+        <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
+        <p>إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span></p>
+      </footer>
+    </div>
+  );
 }

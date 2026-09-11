@@ -1,59 +1,71 @@
 'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Sparkles, UserCheck, GraduationCap, Heart } from 'lucide-react';
 
 export default function HomePage() {
-    return (
-        <div className="min-h-screen bg-slate-900 text-white flex flex-col justify-between p-4 sm:p-6" dir="rtl">
-            
-            {/* الهيدر والمحتوى الرئيسي */}
-            <div className="max-w-4xl mx-auto w-full flex-1 flex flex-col items-center justify-center text-center space-y-8 py-12">
-                
-                {/* شارة الترحيب */}
-                <div className="inline-flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-full border border-blue-500/20 text-xs sm:text-sm font-semibold">
-                    <Sparkles size={18} />
-                    <span>منظومة الاختبارات والتقييم الذكي</span>
-                </div>
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const router = useRouter();
 
-                {/* العنوان الرئيسي */}
-                <h1 className="text-3xl sm:text-5xl font-black text-white leading-tight">
-                    أهلاً بك في المنصة التعليمية الذكية
-                </h1>
+  const handleStartExam = (e) => {
+    e.preventDefault();
+    if (!pin.trim()) {
+      setError('يرجى إدخال رمز الـ PIN');
+      return;
+    }
+    router.push(`/exam?pin=${encodeURIComponent(pin.trim())}`);
+  };
 
-                <p className="text-gray-400 text-sm sm:text-base max-w-xl leading-relaxed">
-                    توليد امتحانات بالذكاء الاصطناعي، حماية لوحة المعلم بكلمة مرور، وتحليل الأخطاء الشائعة لدى الطلاب بسهولة ودقة.
-                </p>
-
-                {/* أزرار الدخول */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-md pt-4">
-                    <Link
-                        href="/teacher"
-                        className="flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-500 text-white font-bold p-4 rounded-2xl transition-all shadow-lg shadow-blue-600/20 active:scale-95 text-sm"
-                    >
-                        <UserCheck size={20} />
-                        <span>لوحة التحكم للمعلم</span>
-                    </Link>
-
-                    <Link
-                        href="/exam"
-                        className="flex items-center justify-center gap-3 bg-slate-800 hover:bg-slate-700 text-white font-bold p-4 rounded-2xl border border-slate-700 transition-all active:scale-95 text-sm"
-                    >
-                        <GraduationCap size={20} />
-                        <span>صفحة أداء الامتحان للطالب</span>
-                    </Link>
-                </div>
-            </div>
-
-            {/* أسفل الصفحة (Footer) - حقوق إعداد والتصميم والإشراف */}
-            <footer className="max-w-4xl mx-auto w-full border-t border-slate-800/80 pt-6 pb-3 text-center space-y-1.5">
-                <p className="text-xs sm:text-sm text-gray-300 font-semibold">
-                    إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span>
-                </p>
-                <p className="text-xs text-gray-400">
-                    تحت إشراف: <span className="text-amber-400 font-bold">مستر أشرف كامل</span>
-                </p>
-            </footer>
-
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center p-4">
+      <div className="w-full max-w-md bg-[#131B2E] p-8 rounded-2xl shadow-2xl border border-gray-800 text-center">
+        <div className="w-16 h-16 bg-blue-600/20 text-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-blue-500/30 text-2xl font-bold">
+          🎓
         </div>
-    );
+
+        <h1 className="text-2xl font-bold mb-2 text-white">منصة الاختبارات الذكية</h1>
+        <p className="text-gray-400 text-sm mb-6">أدخل رمز الـ PIN لبدء الاختبار</p>
+
+        <form onSubmit={handleStartExam} className="flex flex-col gap-4">
+          <div>
+            <input
+              type="text"
+              value={pin}
+              onChange={(e) => {
+                setPin(e.target.value);
+                setError('');
+              }}
+              placeholder="رمز PIN (جرب: 1234 أو 9999)"
+              className="w-full px-4 py-3 bg-[#0B0F19] border border-gray-700 rounded-xl text-white text-center text-lg focus:outline-none focus:border-blue-500 font-mono"
+            />
+            {error && <p className="text-red-400 text-sm mt-2 text-right">{error}</p>}
+          </div>
+
+          <button
+            type="submit"
+            className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 font-semibold rounded-xl transition cursor-pointer text-white"
+          >
+            بدء الاختبار
+          </button>
+        </form>
+
+        <div className="mt-8 pt-6 border-t border-gray-800 flex justify-between text-xs font-medium">
+          <Link href="/analytics" className="text-amber-400 hover:underline">
+            🏆 لوحة الأوائل
+          </Link>
+          <Link href="/teacher" className="text-blue-400 hover:underline">
+            ⚙️ لوحة المعلم
+          </Link>
+        </div>
+      </div>
+
+      {/* التذييل الثابت */}
+      <footer className="py-6 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1 w-full max-w-md">
+        <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
+        <p>إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span></p>
+      </footer>
+    </div>
+  );
 }
