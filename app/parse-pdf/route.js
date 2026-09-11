@@ -1,15 +1,18 @@
-const formData = new FormData();
-formData.append('file', pdfFile); // ملف الـ PDF المرفوع من المستخدم
+import { NextResponse } from 'next/server';
 
-const response = await fetch('/api/parse-pdf', {
-  method: 'POST',
-  body: formData,
-});
+export async function POST(request) {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file');
 
-const data = await response.json();
+    if (!file) {
+      return NextResponse.json({ error: 'لم يتم العثور على ملف' }, { status: 400 });
+    }
 
-if (data.success) {
-  console.log('النص المستخرج:', data.text);
-} else {
-  console.error('خطأ:', data.error);
+    // قم بمعالجة ملف الـ PDF هنا
+
+    return NextResponse.json({ message: 'تم استلام الملف بنجاح' });
+  } catch (error) {
+    return NextResponse.json({ error: 'حدث خطأ أثناء قراءة الملف' }, { status: 500 });
+  }
 }
