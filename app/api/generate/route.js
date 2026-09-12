@@ -1,9 +1,18 @@
 import { NextResponse } from 'next/server';
 import pdfParse from 'pdf-parse';
-import { pdf } from 'pdf-to-img';
 import { createWorker } from 'tesseract.js';
 
 export const runtime = 'nodejs';
+export async function POST(request) {
+  try {
+    // استيراد ديناميكي يعمل في الـ Runtime فقط
+    const { pdf } = await import('pdf-to-img');
+    
+    // كمل بقية الكود الخاص بك هنا...
+  } catch (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
 
 // 1. استخراج النص الرقمي العادي من الـ PDF
 const extractTextFromPdf = async (buffer) => {
