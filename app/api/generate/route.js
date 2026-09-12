@@ -1,43 +1,35 @@
 import { NextResponse } from 'next/server';
-import pdfParse from 'pdf-parse';
-import { createWorker } from 'tesseract.js';
+import pdfParse from 'pdf-parse-fork';
 
 export const runtime = 'nodejs';
 
-// 1. استخراج النص الرقمي العادي من الـ PDF
+const normalizeText = (text) => {
+  if (!text) return '';
+  return text
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 const extractTextFromPdf = async (buffer) => {
   try {
-    const parse = typeof pdfParse === 'function' ? pdfParse : (pdfParse && pdfParse.default ? pdfParse.default : null);
-    if (!parse) return '';
-    const data = await parse(buffer);
-    return data.text || '';
+    const data = await pdfParse(buffer);
+    return normalizeText(data.text);
   } catch (err) {
+    console.error('PDF Parse Error:', err);
     return '';
   }
 };
 
-// 2. استخراج النص من الـ PDF المصور باستخدام Tesseract OCR
-const extractTextWithOCR = async (buffer) => {
+const extractTextFromImageBuffer = async (buffer) => {
   try {
-    // استيراد ديناميكي لمكتبة pdf-to-img للعمل في بيئة Node.js
-    const { pdf } = await import('pdf-to-img');
-    const document = await pdf(buffer, { scale: 2.0 });
+    const { createWorker } = await import('tesseract.js');
     const worker = await createWorker(['ara', 'eng']);
-    let combinedText = '';
-    let pageCount = 0;
-
-    // قراءة أول 10 صفحات بحد أقصى لضمان السرعة
-    for await (const image of document) {
-      if (pageCount >= 10) break;
-      const { data: { text } } = await worker.recognize(image);
-      combinedText += text + '\n';
-      pageCount++;
-    }
-
+    const { data: { text } } = await worker.recognize(buffer);
     await worker.terminate();
-    return combinedText;
+    return normalizeText(text);
   } catch (error) {
-    console.error('OCR Extraction Error:', error);
+    console.error('Image OCR Error:', error);
     return '';
   }
 };
@@ -51,72 +43,76 @@ export async function POST(req) {
     const promptText = formData.get('prompt') || '';
 
     let extractedText = '';
-    let isPdf = false;
 
-    // معالجة الملف المرفوع
     if (file && typeof file === 'object' && file.name) {
       const arrayBuffer = await file.arrayBuffer();
       const fileBuffer = Buffer.from(arrayBuffer);
-      isPdf = file.name.toLowerCase().endsWith('.pdf') || file.type === 'application/pdf';
+      const fileName = file.name.toLowerCase();
+      const fileType = (file.type || '').toLowerCase();
+
+      const isPdf = fileName.endsWith('.pdf') || fileType.includes('pdf');
+      const isImage = fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') || fileName.endsWith('.webp') || fileType.startsWith('image/');
 
       if (isPdf) {
-        // محاولة استخراج النص العادي أولاً
         extractedText = await extractTextFromPdf(fileBuffer);
-
-        // إذا كان الملف عبارة عن صور (نص أقل من 20 حرف)، يتم تشغيل الـ OCR تلقائياً
-        if (!extractedText || extractedText.trim().length < 20) {
-          extractedText = await extractTextWithOCR(fileBuffer);
-        }
+      } else if (isImage) {
+        extractedText = await extractTextFromImageBuffer(fileBuffer);
       } else {
-        extractedText = fileBuffer.toString('utf-8');
+        extractedText = normalizeText(fileBuffer.toString('utf-8'));
       }
     }
 
-    if (!extractedText || extractedText.trim().length < 10) {
+    if (!extractedText || extractedText.length < 10) {
       return NextResponse.json(
-        { success: false, error: 'تعذر استخراج أية نصوص من الملف. يرجى التأكد من وضوح الصفحات.' },
+        { success: false, error: 'تعذر استخراج النص من الملف. يرجى التأكد من وضوح المحتوى أو رفع ملف غير محمي.' },
         { status: 400 }
       );
     }
 
-    // جلب مفتاح API (Groq أو OpenAI)
     const apiKey = (customApiKey && customApiKey.trim()) || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: 'يرجى إدخال مفتاح API الخاص بك (Groq أو OpenAI) في الحقل المخصص.' },
+        { success: false, error: 'يرجى إدخال مفتاح API الخاص بك في الحقل المخصص.' },
         { status: 400 }
       );
     }
 
-    const systemPrompt = `أنت معلم دقيق جداً. قم بإنشاء اختبار اختيار من متعدد مكون من ${count} أسئلة باللغة العربية.
+    // Prompt يحتوي على حقل explanation لطلب الشرح والتعليل
+    const systemPrompt = `You are a strict academic evaluator. Generate a multiple-choice quiz with ${count} questions strictly based on the provided text.
 
-شروط صارمة:
-1. جميع الأسئلة والخيارات والإجابات الصحيحة يجب أن تكون مستخرجة بنسبة 100% فقط وحصرياً من المحتوى المرفق.
-2. يُمنع منعاً باتاً إبتكار أو إضافة أي سؤال أو معلومة خارج هذا المحتوى.
+LANGUAGE RULE:
+- Detect the language of the source text below.
+- Generate ALL questions, options, correct answers, and explanations ONLY in the exact same language as the source text.
 
-تعليمات إضافية من المعلم: ${promptText || 'لا يوجد'}
+ACCURACY RULES:
+1. Every question must be directly answerable from explicit statements in the text.
+2. DO NOT make assumptions or use external knowledge.
+3. The "correctAnswer" string MUST exactly match one of the items inside the "options" array.
+4. For each question, provide a short "explanation" explaining WHY the correct answer is right according to the text.
 
-المحتوى المستخرج من المذكرة:
+User Instructions: ${promptText || 'None'}
+
+SOURCE TEXT:
 """
 ${extractedText.slice(0, 15000)}
 """
 
-يجب إرجاع النتيجة بصيغة JSON فقط بهذا الهيكل حصراً:
+Return JSON ONLY in this format:
 {
   "questions": [
     {
       "id": 1,
-      "question": "نص السؤال",
-      "options": ["خيار 1", "خيار 2", "خيار 3", "خيار 4"],
-      "correctAnswer": "الخيار الصحيح بالضبط مطابق لإحدى الخيارات"
+      "question": "Question string",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctAnswer": "Option A",
+      "explanation": "Brief explanation of why Option A is correct."
     }
   ]
 }`;
 
     let rawJsonText = '';
 
-    // المعالجة عبر Groq API
     if (apiKey.startsWith('gsk_')) {
       let activeModels = [];
       try {
@@ -125,13 +121,21 @@ ${extractedText.slice(0, 15000)}
         });
         if (modelsRes.ok) {
           const modelsData = await modelsRes.json();
-          if (Array.isArray(modelsData.data)) activeModels = modelsData.data.map(m => m.id);
+          if (Array.isArray(modelsData.data)) {
+            activeModels = modelsData.data.map(m => m.id);
+          }
         }
       } catch (e) {}
 
-      const fallbackModels = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'llama-3.2-3b-preview'];
+      const fallbackModels = [
+        'llama-3.3-70b-versatile',
+        'llama-3.1-8b-instant',
+        'llama3-8b-8192',
+        'gemma2-9b-it'
+      ];
+
       const modelsToTry = Array.from(new Set([...activeModels, ...fallbackModels]))
-        .filter(m => !m.includes('mixtral') && !m.match(/^llama3-\d/));
+        .filter(m => !m.includes('mixtral') && !m.includes('guard'));
 
       let lastError = '';
       for (const model of modelsToTry) {
@@ -165,7 +169,6 @@ ${extractedText.slice(0, 15000)}
       if (!rawJsonText) throw new Error(lastError || 'يرجى التأكد من صحة مفتاح Groq الخاص بك.');
 
     } else {
-      // المعالجة عبر OpenAI API
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -189,14 +192,35 @@ ${extractedText.slice(0, 15000)}
       throw new Error('لم يرجع الذكاء الاصطناعي أي استجابة.');
     }
 
-    // تنظيف نص الـ JSON واستخراج الأسئلة
     let cleanJson = rawJsonText.trim();
     if (cleanJson.startsWith('```')) {
       cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     }
 
     const parsedData = JSON.parse(cleanJson);
-    const questions = parsedData.questions || (Array.isArray(parsedData) ? parsedData : []);
+    let questions = parsedData.questions || (Array.isArray(parsedData) ? parsedData : []);
+
+    questions = questions.map((q) => {
+      if (!q.options || q.options.length === 0) return q;
+
+      const exactMatch = q.options.find((opt) => opt.trim() === (q.correctAnswer || '').trim());
+
+      if (exactMatch) {
+        q.correctAnswer = exactMatch;
+      } else {
+        const closeMatch = q.options.find((opt) =>
+          opt.trim().toLowerCase().includes((q.correctAnswer || '').trim().toLowerCase()) ||
+          (q.correctAnswer || '').trim().toLowerCase().includes(opt.trim().toLowerCase())
+        );
+        q.correctAnswer = closeMatch || q.options[0];
+      }
+
+      if (!q.explanation) {
+        q.explanation = 'الإجابة مستخرجة وباشرة من نص الملف.';
+      }
+
+      return q;
+    });
 
     if (!questions || questions.length === 0) {
       throw new Error('تعذر استخراج الأسئلة من النص المرفق.');

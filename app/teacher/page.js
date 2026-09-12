@@ -5,6 +5,10 @@ import Link from 'next/link';
 
 export default function TeacherPage() {
   const DEFAULT_PASSWORD = '123456';
+  
+  // 🔒 تاريخ الميلاد الصحيح للتحقق من الهوية (قم بتغييره لتاريخ ميلادك الحقيقي YYYY-MM-DD)
+  const CORRECT_BIRTH_DATE = '2011-08-19';
+
   const [currentPassword, setCurrentPassword] = useState(DEFAULT_PASSWORD);
   const [inputPassword, setInputPassword] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -14,6 +18,11 @@ export default function TeacherPage() {
   const [savedExams, setSavedExams] = useState([]);
   const [selectedPin, setSelectedPin] = useState('');
   const [customApiKey, setCustomApiKey] = useState('');
+  const [searchStudent, setSearchStudent] = useState('');
+
+  // حالة نافذة التحقق من الهوية لإعادة الضبط
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [birthDateInput, setBirthDateInput] = useState('');
 
   // إعدادات الامتحان والأسئلة
   const [pin, setPin] = useState('1234');
@@ -33,6 +42,10 @@ export default function TeacherPage() {
       setCurrentPassword(savedPass || DEFAULT_PASSWORD);
       const savedApiKey = localStorage.getItem('user_gemini_api_key');
       if (savedApiKey) setCustomApiKey(savedApiKey);
+      
+      // استعادة حالة الدخول للجلسة الحالية
+      const sessionAuth = sessionStorage.getItem('teacher_authenticated');
+      if (sessionAuth === 'true') setIsAuthenticated(true);
     }
   }, []);
 
@@ -55,7 +68,7 @@ export default function TeacherPage() {
           const examPin = key.replace('exam_', '');
           examsList.push({ pin: examPin, ...data });
         } catch (e) {
-          console.error(e);
+          console.error('Error parsing exam key:', key, e);
         }
       }
     }
@@ -72,17 +85,34 @@ export default function TeacherPage() {
     e.preventDefault();
     if (inputPassword.trim() === currentPassword.trim()) {
       setIsAuthenticated(true);
+      sessionStorage.setItem('teacher_authenticated', 'true');
       setInputPassword('');
     } else {
       alert('كلمة المرور غير صحيحة!');
     }
   };
 
-  const handleResetPassword = () => {
-    if (confirm('هل تريد إعادة ضبط كلمة المرور للوضع الافتراضي؟')) {
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    sessionStorage.removeItem('teacher_authenticated');
+  };
+
+  // فتح نافذة التحقق لإعادة الضبط
+  const handleOpenResetModal = () => {
+    setBirthDateInput('');
+    setShowResetModal(true);
+  };
+
+  // تأكيد إجابة سؤال الأمان وإعادة الضبط
+  const handleConfirmReset = (e) => {
+    e.preventDefault();
+    if (birthDateInput === CORRECT_BIRTH_DATE) {
       localStorage.removeItem('teacher_password');
       setCurrentPassword(DEFAULT_PASSWORD);
-      alert('تمت إعادة الضبط بنجاح');
+      setShowResetModal(false);
+      alert('تم التأكد من هويتك بنجاح! تم إعادة ضبط كلمة المرور للوضع الافتراضي (123456).');
+    } else {
+      alert('تاريخ الميلاد غير صحيح! لا يمكن إعادة ضبط كلمة المرور.');
     }
   };
 
@@ -105,10 +135,45 @@ export default function TeacherPage() {
     }
   };
 
+  const handleCopyPin = (targetPin = pin) => {
+    if (!targetPin) return alert('لا يوجد PIN لنسخه');
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(String(targetPin).trim());
+      alert(`📋 تم نسخ PIN الامتحان (${targetPin}) بنجاح!`);
+    } else {
+      alert(`رمز PIN هو: ${targetPin}`);
+    }
+  };
+
+  const handleExportCSV = () => {
+    if (filteredScores.length === 0) return alert('لا توجد نتائج لتصديرها!');
+    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+    csvContent += "#,اسم الطالب,PIN,الدرجة,إجمالي الأسئلة,الوقت\n";
+    filteredScores.forEach((s, i) => {
+      csvContent += `${i + 1},"${s.name || ''}",${s.pin || ''},${s.score || 0},${s.total || 0},"${s.time || ''}"\n`;
+    });
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `نتائج_الطلاب_${selectedPin ? 'PIN_' + selectedPin : 'الكل'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleDeleteSingleScore = (scoreObj) => {
+    if (confirm(`هل تريد حذف نتيجة الطالب (${scoreObj.name})؟`)) {
+      const updated = scores.filter((s) => s !== scoreObj);
+      localStorage.setItem('exam_scores', JSON.stringify(updated));
+      setScores(updated);
+      alert('تم حذف نتيجة الطالب بنجاح.');
+    }
+  };
+
   const handleSelectExam = (selectedExamPin) => {
     setSelectedPin(selectedExamPin);
     if (!selectedExamPin) return;
-    const found = savedExams.find((e) => e.pin === selectedExamPin);
+    const found = savedExams.find((e) => String(e.pin) === String(selectedExamPin));
     if (found) {
       setPin(found.pin);
       setTitle(found.title || 'بدون عنوان');
@@ -134,7 +199,7 @@ export default function TeacherPage() {
       const formData = new FormData();
       if (file) formData.append('file', file);
       formData.append('prompt', prompt.trim());
-      formData.append('count', questionCount);
+      formData.append('count', String(questionCount));
       if (customApiKey.trim()) formData.append('customApiKey', customApiKey.trim());
 
       const res = await fetch('/api/generate', {
@@ -146,7 +211,7 @@ export default function TeacherPage() {
       let data = {};
       try {
         data = JSON.parse(resText);
-      } catch (e) {
+      } catch {
         throw new Error('فشل معالجة استجابة الخادم. يرجى التأكد من الكود أو المفتاح المستخدم.');
       }
 
@@ -163,11 +228,7 @@ export default function TeacherPage() {
         if (data.title && (!title || title === 'اختبار جديد')) {
           setTitle(data.title);
         }
-        if (data.usingCustomKey) {
-          alert('🔑 تم التوليد بنجاح باستخدام مفتاح API الخاص بك!');
-        } else {
-          alert('🌐 تم التوليد بنجاح بالذكاء الاصطناعي!');
-        }
+        alert(data.usingCustomKey ? '🔑 تم التوليد بنجاح باستخدام مفتاح API الخاص بك!' : '🌐 تم التوليد بنجاح بالذكاء الاصطناعي!');
       } else {
         alert(data.error || 'حدث خطأ أثناء التوليد');
       }
@@ -216,11 +277,10 @@ export default function TeacherPage() {
     }
   };
 
-  const filteredScores = selectedPin
-    ? scores.filter((s) => String(s.pin) === String(selectedPin))
-    : scores;
+  const filteredScores = scores
+    .filter((s) => (!selectedPin ? true : String(s.pin) === String(selectedPin)))
+    .filter((s) => (!searchStudent.trim() ? true : s.name?.toLowerCase().includes(searchStudent.toLowerCase())));
 
-  // استخراج وحساب الأخطاء الشائعة للطلاب في الامتحان المحدد
   const getCommonMistakes = () => {
     const currentExam = savedExams.find((e) => String(e.pin) === String(selectedPin));
     const examQuestions = currentExam?.questions || questions;
@@ -249,7 +309,7 @@ export default function TeacherPage() {
         return {
           questionText: q.text || `سؤال #${idx + 1}`,
           wrongCount: count,
-          percentage: percentage,
+          percentage,
           correctAnswer: q.options ? q.options[q.correctOption] : '',
         };
       })
@@ -289,12 +349,52 @@ export default function TeacherPage() {
               <Link href="/" className="hover:text-blue-400 font-semibold transition">
                 🏠 الصفحة الرئيسية
               </Link>
-              <button onClick={handleResetPassword} className="hover:text-amber-400 underline">
+              <button onClick={handleOpenResetModal} className="hover:text-amber-400 underline">
                 🔄 إعادة ضبط كلمة المرور
               </button>
             </div>
           </div>
         </div>
+
+        {/* نافذة التحقق من الهوية عند إعاده الضبط */}
+        {showResetModal && (
+          <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <div className="bg-[#131B2E] border border-gray-700 p-6 rounded-2xl max-w-sm w-full space-y-4 text-right shadow-2xl">
+              <div className="flex items-center gap-2 text-amber-400">
+                <span className="text-xl">🛡️</span>
+                <h3 className="text-sm font-bold">التحقق من الهوية</h3>
+              </div>
+              <p className="text-xs text-gray-300 leading-relaxed">
+                يرجى أدخل تاريخ ميلادك لتأكيد هويتك قبل إعادة ضبط كلمة المرور:
+              </p>
+              <form onSubmit={handleConfirmReset} className="space-y-3">
+                <input
+                  type="date"
+                  value={birthDateInput}
+                  onChange={(e) => setBirthDateInput(e.target.value)}
+                  className="w-full p-2.5 bg-[#0B0F19] border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-500"
+                  required
+                />
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="submit"
+                    className="flex-1 py-2 bg-amber-600 hover:bg-amber-700 text-xs font-bold rounded-xl transition text-white"
+                  >
+                    تأكيد وإعادة الضبط
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowResetModal(false)}
+                    className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-xs font-bold rounded-xl transition text-gray-300"
+                  >
+                    إلغاء
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         <footer className="py-4 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-6 space-y-1">
           <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
           <p>إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span></p>
@@ -360,8 +460,8 @@ export default function TeacherPage() {
               </div>
             )}
             <button
-              onClick={() => setIsAuthenticated(false)}
-              className="px-3 py-2 bg-red-600/20 text-red-400 border border-red-500/30 text-xs font-semibold rounded-xl"
+              onClick={handleLogout}
+              className="px-3 py-2 bg-red-600/20 text-red-400 border border-red-500/30 text-xs font-semibold rounded-xl hover:bg-red-600/30 transition"
             >
               خروج
             </button>
@@ -386,12 +486,20 @@ export default function TeacherPage() {
             </select>
           </div>
           {selectedPin && (
-            <button
-              onClick={() => handleDeleteExam(selectedPin)}
-              className="px-4 py-2.5 bg-red-600/20 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs"
-            >
-              🗑️ حذف الامتحان
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleCopyPin(selectedPin)}
+                className="px-3.5 py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 font-bold rounded-xl text-xs hover:bg-blue-600/30 transition"
+              >
+                📋 نسخ PIN
+              </button>
+              <button
+                onClick={() => handleDeleteExam(selectedPin)}
+                className="px-4 py-2.5 bg-red-600/20 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs hover:bg-red-600/30 transition"
+              >
+                🗑️ حذف الامتحان
+              </button>
+            </div>
           )}
         </div>
 
@@ -408,7 +516,7 @@ export default function TeacherPage() {
                     min="1"
                     max="30"
                     value={questionCount}
-                    onChange={(e) => setQuestionCount(e.target.value)}
+                    onChange={(e) => setQuestionCount(Number(e.target.value))}
                     className="w-full p-2.5 bg-[#131B2E] border border-gray-700 rounded-xl text-emerald-400 font-bold text-sm"
                   />
                 </div>
@@ -418,7 +526,7 @@ export default function TeacherPage() {
                     type="number"
                     min="1"
                     value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
+                    onChange={(e) => setDuration(Number(e.target.value))}
                     className="w-full p-2.5 bg-[#131B2E] border border-gray-700 rounded-xl text-amber-400 font-bold text-sm"
                   />
                 </div>
@@ -493,12 +601,21 @@ export default function TeacherPage() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">PIN الامتحان:</label>
-                  <input
-                    type="text"
-                    value={pin}
-                    onChange={(e) => setPin(e.target.value)}
-                    className="p-2 bg-[#0B0F19] border border-gray-700 rounded-xl text-center w-28 font-bold text-blue-400"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={pin}
+                      onChange={(e) => setPin(e.target.value)}
+                      className="p-2 bg-[#0B0F19] border border-gray-700 rounded-xl text-center w-28 font-bold text-blue-400"
+                    />
+                    <button
+                      onClick={() => handleCopyPin(pin)}
+                      className="p-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-xl text-xs font-bold"
+                      title="نسخ الـ PIN"
+                    >
+                      📋
+                    </button>
+                  </div>
                 </div>
                 <div className="bg-[#0B0F19] px-4 py-2 rounded-xl border border-gray-700 text-center">
                   <span className="block text-xs text-gray-400">إجمالي الأسئلة</span>
@@ -514,7 +631,7 @@ export default function TeacherPage() {
                       <span className="text-xs text-blue-400 font-bold">سؤال #{qIdx + 1}</span>
                       <button
                         onClick={() => handleDeleteQuestion(qIdx)}
-                        className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg"
+                        className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-600/30 transition"
                       >
                         🗑️ حذف
                       </button>
@@ -541,7 +658,7 @@ export default function TeacherPage() {
                               newQ[qIdx] = { ...newQ[qIdx], correctOption: oIdx };
                               setQuestions(newQ);
                             }}
-                            className="accent-green-500"
+                            className="accent-green-500 cursor-pointer"
                           />
                           <input
                             type="text"
@@ -565,13 +682,13 @@ export default function TeacherPage() {
               <div className="flex flex-wrap gap-3">
                 <button
                   onClick={handleAddQuestion}
-                  className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 font-bold rounded-xl text-sm border border-gray-700"
+                  className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 font-bold rounded-xl text-sm border border-gray-700 transition"
                 >
                   ➕ إضافة سؤال يدوي
                 </button>
                 <button
                   onClick={handlePublish}
-                  className="flex-1 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-xl text-sm"
+                  className="flex-1 py-3 bg-green-600 hover:bg-green-700 font-bold rounded-xl text-sm transition"
                 >
                   💾 حفظ ونشر الامتحان
                 </button>
@@ -583,12 +700,31 @@ export default function TeacherPage() {
           <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-800 pb-3">
               <h2 className="text-lg font-bold text-amber-400">🏆 نتائج وأوائل الطلاب</h2>
-              <button
-                onClick={handleResetScores}
-                className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs transition"
-              >
-                🔄 مسح النتائج / ريزيت للأوائل
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleExportCSV}
+                  className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 font-bold rounded-xl text-xs transition"
+                >
+                  📥 تصدير النتائج (Excel)
+                </button>
+                <button
+                  onClick={handleResetScores}
+                  className="px-3 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs transition"
+                >
+                  🔄 مسح جميع النتائج
+                </button>
+              </div>
+            </div>
+
+            {/* حقل البحث عن اسم طالب */}
+            <div className="bg-[#0B0F19] p-3 rounded-xl border border-gray-800">
+              <input
+                type="text"
+                placeholder="🔍 البحث باسم الطالب..."
+                value={searchStudent}
+                onChange={(e) => setSearchStudent(e.target.value)}
+                className="w-full bg-transparent text-xs text-white focus:outline-none"
+              />
             </div>
 
             {/* قسم تحليل الأخطاء الشائعة */}
@@ -652,12 +788,13 @@ export default function TeacherPage() {
                     <th className="p-3">الرمز PIN</th>
                     <th className="p-3">الدرجة</th>
                     <th className="p-3">الوقت</th>
+                    <th className="p-3 text-center">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800">
                   {filteredScores.length === 0 ? (
                     <tr>
-                      <td colSpan="5" className="p-4 text-center text-gray-500">
+                      <td colSpan="6" className="p-4 text-center text-gray-500">
                         لا توجد نتائج مسجلة حتى الآن.
                       </td>
                     </tr>
@@ -671,6 +808,15 @@ export default function TeacherPage() {
                           {s.score} / {s.total}
                         </td>
                         <td className="p-3 font-mono text-gray-400">{s.time}</td>
+                        <td className="p-3 text-center">
+                          <button
+                            onClick={() => handleDeleteSingleScore(s)}
+                            className="text-xs text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-500/10 rounded-lg border border-red-500/20 hover:bg-red-500/20 transition"
+                            title="حذف نتيجة هذا الطالب"
+                          >
+                            🗑️
+                          </button>
+                        </td>
                       </tr>
                     ))
                   )}

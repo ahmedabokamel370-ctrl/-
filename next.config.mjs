@@ -1,6 +1,6 @@
-/** @type {import('next').NextStyle} */
+/** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['pdf-to-img', 'pdf-parse', 'tesseract.js'],
+  serverExternalPackages: ['pdf-parse-fork'],
 };
 
 export default nextConfig;

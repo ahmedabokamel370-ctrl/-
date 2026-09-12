@@ -21,9 +21,13 @@ export default function StudentPage() {
       if (!examData) return;
 
       let calculatedScore = 0;
+      const wrongQuestions = []; // تجميع أرقام الأسئلة الخاطئة
+
       examData.questions.forEach((q, index) => {
         if (userAnswers[index] === q.correctOption) {
           calculatedScore += 1;
+        } else {
+          wrongQuestions.push(index); // حفظ مؤشر السؤال الخاطئ
         }
       });
 
@@ -39,6 +43,7 @@ export default function StudentPage() {
           pin: pin,
           score: calculatedScore,
           total: totalQuestions,
+          wrongQuestions: wrongQuestions, // إضافة الأسئلة الخاطئة للسجل
           time: new Date().toLocaleTimeString('ar-EG', {
             hour: '2-digit',
             minute: '2-digit',
@@ -261,7 +266,7 @@ export default function StudentPage() {
             </div>
 
             <div className="bg-[#0B0F19] p-6 rounded-2xl border border-gray-800 space-y-3">
-              <div className="text-3xl font-extrabold font-mono text-blue-400">
+              <div className="text-3xl font-extrabold font-mono text-blue-400" dir="ltr">
                 {result.score} / {result.total}
               </div>
               <div className="text-xs text-gray-400 font-semibold">
