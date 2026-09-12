@@ -3,16 +3,6 @@ import pdfParse from 'pdf-parse';
 import { createWorker } from 'tesseract.js';
 
 export const runtime = 'nodejs';
-export async function POST(request) {
-  try {
-    // استيراد ديناميكي يعمل في الـ Runtime فقط
-    const { pdf } = await import('pdf-to-img');
-    
-    // كمل بقية الكود الخاص بك هنا...
-  } catch (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
 
 // 1. استخراج النص الرقمي العادي من الـ PDF
 const extractTextFromPdf = async (buffer) => {
@@ -29,6 +19,8 @@ const extractTextFromPdf = async (buffer) => {
 // 2. استخراج النص من الـ PDF المصور باستخدام Tesseract OCR
 const extractTextWithOCR = async (buffer) => {
   try {
+    // استيراد ديناميكي لمكتبة pdf-to-img للعمل في بيئة Node.js
+    const { pdf } = await import('pdf-to-img');
     const document = await pdf(buffer, { scale: 2.0 });
     const worker = await createWorker(['ara', 'eng']);
     let combinedText = '';
