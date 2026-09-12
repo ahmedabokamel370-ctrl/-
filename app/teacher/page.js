@@ -40,7 +40,7 @@ export default function TeacherPage() {
     if (typeof window !== 'undefined') {
       const savedPass = localStorage.getItem('teacher_password');
       setCurrentPassword(savedPass || DEFAULT_PASSWORD);
-      const savedApiKey = localStorage.getItem('user_gemini_api_key');
+      const savedApiKey = localStorage.getItem('user_groq_api_key');
       if (savedApiKey) setCustomApiKey(savedApiKey);
       
       // استعادة حالة الدخول للجلسة الحالية
@@ -53,7 +53,7 @@ export default function TeacherPage() {
     const val = e.target.value;
     setCustomApiKey(val);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('user_gemini_api_key', val);
+      localStorage.setItem('user_groq_api_key', val);
     }
   };
 
@@ -535,7 +535,7 @@ export default function TeacherPage() {
               {/* مفتاح API مخصص */}
               <div className="bg-[#0B0F19] p-4 rounded-xl border border-gray-800 space-y-2">
                 <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-gray-300">🔑 مفتاح API خاص (Gemini / Groq)</label>
+                  <label className="text-xs font-bold text-gray-300">🔑 مفتاح API خاص (Groq API)</label>
                   <span
                     className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
                       customApiKey.trim()
@@ -548,7 +548,7 @@ export default function TeacherPage() {
                 </div>
                 <input
                   type="password"
-                  placeholder="أدخل مفتاح API الخاص بك (اختياري)"
+                  placeholder="أدخل مفتاح Groq API الخاص بك (اختياري)"
                   value={customApiKey}
                   onChange={handleApiKeyChange}
                   className="w-full p-2.5 bg-[#131B2E] border border-gray-700 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
@@ -741,23 +741,19 @@ export default function TeacherPage() {
               {(() => {
                 const mistakes = getCommonMistakes();
                 if (filteredScores.length === 0) {
-                  return <p className="text-xs text-gray-500 text-center py-2">لا توجد نتائج طلاب لعرض الأخطاء الشائعة.</p>;
+                  return <p className="text-xs text-gray-500 text-center py-4">لا توجد بيانات نتائج متاحة للتحليل حتى الآن.</p>;
                 }
                 if (mistakes.length === 0) {
-                  return (
-                    <p className="text-xs text-emerald-400 text-center py-2 font-semibold">
-                      🎉 ممتاز! لا توجد أخطاء شائعة متكررة مسجلة لهذا الامتحان حتى الآن.
-                    </p>
-                  );
+                  return <p className="text-xs text-emerald-400 text-center py-4">🎉 ممتاز! لا توجد أخطاء متكررة لدى الطلاب.</p>;
                 }
                 return (
-                  <div className="space-y-2.5">
+                  <div className="space-y-2">
                     {mistakes.map((m, idx) => (
-                      <div key={idx} className="p-3 bg-[#131B2E] rounded-xl border border-red-500/20 space-y-1.5">
-                        <div className="flex justify-between items-center text-xs gap-2">
-                          <span className="font-semibold text-white">❓ {m.questionText}</span>
-                          <span className="text-red-400 font-bold bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30 text-[11px] shrink-0">
-                            أخطأ فيه {m.wrongCount} طلاب ({m.percentage}%)
+                      <div key={idx} className="p-3 bg-[#131B2E] rounded-lg border border-red-500/20 space-y-1.5">
+                        <div className="flex justify-between items-start gap-2">
+                          <p className="text-xs font-semibold text-gray-200 flex-1">{m.questionText}</p>
+                          <span className="text-[10px] font-bold bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/30 shrink-0">
+                            أخطأ فيه {m.wrongCount} طالب ({m.percentage}%)
                           </span>
                         </div>
                         {m.correctAnswer && (
@@ -765,12 +761,6 @@ export default function TeacherPage() {
                             ✓ الإجابة الصحيحة: {m.correctAnswer}
                           </p>
                         )}
-                        <div className="w-full bg-gray-800 h-1.5 rounded-full overflow-hidden">
-                          <div
-                            className="bg-red-500 h-full rounded-full transition-all duration-300"
-                            style={{ width: `${m.percentage}%` }}
-                          />
-                        </div>
                       </div>
                     ))}
                   </div>
@@ -778,41 +768,43 @@ export default function TeacherPage() {
               })()}
             </div>
 
-            {/* جدول النتائج */}
+            {/* جدول نتائج الطلاب */}
             <div className="overflow-x-auto">
-              <table className="w-full text-right text-sm text-gray-300">
-                <thead className="bg-[#0B0F19] text-gray-400 text-xs">
-                  <tr>
+              <table className="w-full text-right text-xs">
+                <thead>
+                  <tr className="bg-[#0B0F19] text-gray-400 border-b border-gray-800">
                     <th className="p-3">#</th>
                     <th className="p-3">اسم الطالب</th>
-                    <th className="p-3">الرمز PIN</th>
+                    <th className="p-3">PIN</th>
                     <th className="p-3">الدرجة</th>
                     <th className="p-3">الوقت</th>
                     <th className="p-3 text-center">إجراءات</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-800">
+                <tbody>
                   {filteredScores.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="p-4 text-center text-gray-500">
-                        لا توجد نتائج مسجلة حتى الآن.
+                      <td colSpan="6" className="p-6 text-center text-gray-500">
+                        لا توجد نتائج مسجلة حتى الآن
                       </td>
                     </tr>
                   ) : (
-                    filteredScores.map((s, i) => (
-                      <tr key={i}>
-                        <td className="p-3 font-bold text-amber-400">{i + 1}</td>
-                        <td className="p-3 text-white font-semibold">{s.name}</td>
-                        <td className="p-3 font-mono text-blue-400">{s.pin || '-'}</td>
-                        <td className="p-3 text-emerald-400 font-bold">
-                          {s.score} / {s.total}
+                    filteredScores.map((s, idx) => (
+                      <tr key={idx} className="border-b border-gray-800/50 hover:bg-[#0B0F19]/50 transition">
+                        <td className="p-3 font-bold text-amber-400">{idx + 1}</td>
+                        <td className="p-3 font-semibold text-white">{s.name || 'بدون اسم'}</td>
+                        <td className="p-3 text-blue-400 font-mono">{s.pin || '-'}</td>
+                        <td className="p-3">
+                          <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded-lg font-bold border border-emerald-500/20">
+                            {s.score} / {s.total}
+                          </span>
                         </td>
-                        <td className="p-3 font-mono text-gray-400">{s.time}</td>
+                        <td className="p-3 text-gray-400 dir-ltr text-right">{s.time || '-'}</td>
                         <td className="p-3 text-center">
                           <button
                             onClick={() => handleDeleteSingleScore(s)}
-                            className="text-xs text-red-400 hover:text-red-300 font-bold px-2 py-1 bg-red-500/10 rounded-lg border border-red-500/20 hover:bg-red-500/20 transition"
-                            title="حذف نتيجة هذا الطالب"
+                            className="p-1.5 bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition"
+                            title="حذف هذه النتيجة"
                           >
                             🗑️
                           </button>
@@ -827,7 +819,7 @@ export default function TeacherPage() {
         )}
       </div>
 
-      <footer className="py-6 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1">
+      <footer className="py-4 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1">
         <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
         <p>إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span></p>
       </footer>

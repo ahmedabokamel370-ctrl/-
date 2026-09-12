@@ -3,6 +3,7 @@ import pdfParse from 'pdf-parse-fork';
 
 export const runtime = 'nodejs';
 
+// تنظيف وتنسيق النص المستخرج
 const normalizeText = (text) => {
   if (!text) return '';
   return text
@@ -11,6 +12,7 @@ const normalizeText = (text) => {
     .trim();
 };
 
+// استخراج النص من ملفات PDF
 const extractTextFromPdf = async (buffer) => {
   try {
     const data = await pdfParse(buffer);
@@ -21,6 +23,7 @@ const extractTextFromPdf = async (buffer) => {
   }
 };
 
+// استخراج النص من الصور عبر OCR (Tesseract)
 const extractTextFromImageBuffer = async (buffer) => {
   try {
     const { createWorker } = await import('tesseract.js');
@@ -38,12 +41,15 @@ export async function POST(req) {
   try {
     const formData = await req.formData();
     const file = formData.get('file');
-    const customApiKey = formData.get('apiKey');
+    
+    // دعم كلا الاسمين للمفتاح لضمان التوافق مع الفرونت إند
+    const customApiKey = formData.get('customApiKey') || formData.get('apiKey');
     const count = formData.get('count') || '5';
     const promptText = formData.get('prompt') || '';
 
     let extractedText = '';
 
+    // 1. استخراج المحتوى من الملف إذا وجد
     if (file && typeof file === 'object' && file.name) {
       const arrayBuffer = await file.arrayBuffer();
       const fileBuffer = Buffer.from(arrayBuffer);
@@ -62,44 +68,45 @@ export async function POST(req) {
       }
     }
 
-    if (!extractedText || extractedText.length < 10) {
+    // 2. التحقق من وجود مصدر للتوليد (ملف أو نص البرومبت)
+    if ((!extractedText || extractedText.length < 10) && (!promptText || promptText.trim().length < 3)) {
       return NextResponse.json(
-        { success: false, error: 'تعذر استخراج النص من الملف. يرجى التأكد من وضوح المحتوى أو رفع ملف غير محمي.' },
+        { success: false, error: 'يرجى كتابة نص/موضوع الامتحان أو إرفاق ملف يحتوي على المحتوى المطلوب.' },
         { status: 400 }
       );
     }
 
+    // 3. تحديد مفتاح الـ API المستخدم
     const apiKey = (customApiKey && customApiKey.trim()) || process.env.GROQ_API_KEY || process.env.OPENAI_API_KEY;
 
     if (!apiKey) {
       return NextResponse.json(
-        { success: false, error: 'يرجى إدخال مفتاح API الخاص بك في الحقل المخصص.' },
+        { success: false, error: 'يرجى أدخل مفتاح API الخاص بك في الحقل المخصص أو إعداده في النظام.' },
         { status: 400 }
       );
     }
 
-    // Prompt يحتوي على حقل explanation لطلب الشرح والتعليل
-    const systemPrompt = `You are a strict academic evaluator. Generate a multiple-choice quiz with ${count} questions strictly based on the provided text.
+    // 4. إعداد تعليمات الذكاء الاصطناعي (System Prompt)
+    const contextContent = extractedText ? `SOURCE TEXT:\n"""\n${extractedText.slice(0, 15000)}\n"""` : 'No file provided. Generate quiz solely based on the user instructions topic.';
+
+    const systemPrompt = `You are an expert educational quiz creator. Generate a multiple-choice quiz with strictly ${count} questions based on the provided input.
 
 LANGUAGE RULE:
-- Detect the language of the source text below.
-- Generate ALL questions, options, correct answers, and explanations ONLY in the exact same language as the source text.
+- Detect the language of the provided text or prompt.
+- Generate ALL questions, options, correct answers, and explanations in that exact same language (Arabic if Arabic, English if English).
 
-ACCURACY RULES:
-1. Every question must be directly answerable from explicit statements in the text.
-2. DO NOT make assumptions or use external knowledge.
-3. The "correctAnswer" string MUST exactly match one of the items inside the "options" array.
-4. For each question, provide a short "explanation" explaining WHY the correct answer is right according to the text.
+RULES:
+1. Provide exactly 4 options per question.
+2. The "correctAnswer" string MUST match one of the items in the "options" array.
+3. For each question, provide a short "explanation" for why the answer is correct.
 
-User Instructions: ${promptText || 'None'}
+USER INSTRUCTIONS / TOPIC: ${promptText || 'None'}
 
-SOURCE TEXT:
-"""
-${extractedText.slice(0, 15000)}
-"""
+${contextContent}
 
-Return JSON ONLY in this format:
+Return JSON ONLY in this exact structure:
 {
+  "title": "Short suitable exam title",
   "questions": [
     {
       "id": 1,
@@ -113,6 +120,7 @@ Return JSON ONLY in this format:
 
     let rawJsonText = '';
 
+    // 5. التنفيذ عبر Groq أو OpenAI
     if (apiKey.startsWith('gsk_')) {
       let activeModels = [];
       try {
@@ -125,7 +133,9 @@ Return JSON ONLY in this format:
             activeModels = modelsData.data.map(m => m.id);
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error fetching Groq models:', e);
+      }
 
       const fallbackModels = [
         'llama-3.3-70b-versatile',
@@ -149,7 +159,7 @@ Return JSON ONLY in this format:
             body: JSON.stringify({
               model: model,
               messages: [{ role: 'user', content: systemPrompt }],
-              temperature: 0.1,
+              temperature: 0.2,
               response_format: { type: 'json_object' }
             })
           });
@@ -166,9 +176,10 @@ Return JSON ONLY in this format:
         }
       }
 
-      if (!rawJsonText) throw new Error(lastError || 'يرجى التأكد من صحة مفتاح Groq الخاص بك.');
+      if (!rawJsonText) throw new Error(lastError || 'يرجى التأكد من صحة مفتاح Groq الخاص بك وصلاحيته.');
 
     } else {
+      // استخدام OpenAI API
       const response = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -178,13 +189,13 @@ Return JSON ONLY in this format:
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [{ role: 'user', content: systemPrompt }],
-          temperature: 0.1,
+          temperature: 0.2,
           response_format: { type: 'json_object' }
         })
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error?.message || 'مفتاح OpenAI غير صالح أو لا يوجد رصيد');
+      if (!response.ok) throw new Error(data.error?.message || 'مفتاح OpenAI غير صالح أو انتهى الرصيد المتاح.');
       rawJsonText = data.choices?.[0]?.message?.content;
     }
 
@@ -192,6 +203,7 @@ Return JSON ONLY in this format:
       throw new Error('لم يرجع الذكاء الاصطناعي أي استجابة.');
     }
 
+    // 6. معالجة وتنسيق كود الـ JSON الناتج
     let cleanJson = rawJsonText.trim();
     if (cleanJson.startsWith('```')) {
       cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
@@ -200,41 +212,46 @@ Return JSON ONLY in this format:
     const parsedData = JSON.parse(cleanJson);
     let questions = parsedData.questions || (Array.isArray(parsedData) ? parsedData : []);
 
+    // 7. تحسين وتدقيق الاختيارات وتحديد الخيار الصحيح برقم الفهرس
     questions = questions.map((q) => {
-      if (!q.options || q.options.length === 0) return q;
+      if (!q.options || !Array.isArray(q.options) || q.options.length === 0) return q;
 
-      const exactMatch = q.options.find((opt) => opt.trim() === (q.correctAnswer || '').trim());
+      const rawCorrect = (q.correctAnswer || '').trim();
+      let correctIndex = q.options.findIndex(opt => opt.trim() === rawCorrect);
 
-      if (exactMatch) {
-        q.correctAnswer = exactMatch;
-      } else {
-        const closeMatch = q.options.find((opt) =>
-          opt.trim().toLowerCase().includes((q.correctAnswer || '').trim().toLowerCase()) ||
-          (q.correctAnswer || '').trim().toLowerCase().includes(opt.trim().toLowerCase())
+      if (correctIndex === -1) {
+        correctIndex = q.options.findIndex(opt =>
+          opt.trim().toLowerCase().includes(rawCorrect.toLowerCase()) ||
+          rawCorrect.toLowerCase().includes(opt.trim().toLowerCase())
         );
-        q.correctAnswer = closeMatch || q.options[0];
       }
 
-      if (!q.explanation) {
-        q.explanation = 'الإجابة مستخرجة وباشرة من نص الملف.';
-      }
+      if (correctIndex === -1) correctIndex = 0;
 
-      return q;
+      return {
+        question: q.question || q.text || 'سؤال بدون عنوان',
+        options: q.options,
+        correctOption: correctIndex,
+        correctAnswer: q.options[correctIndex],
+        explanation: q.explanation || 'الإجابة مستخرجة ومباشرة من نص المادة.'
+      };
     });
 
     if (!questions || questions.length === 0) {
-      throw new Error('تعذر استخراج الأسئلة من النص المرفق.');
+      throw new Error('تعذر توليد الأسئلة من البيانات المدخلة.');
     }
 
     return NextResponse.json({
       success: true,
+      title: parsedData.title || 'اختبار جديد',
+      usingCustomKey: Boolean(customApiKey && customApiKey.trim()),
       questions: questions
     });
 
   } catch (error) {
     console.error('Generation Error:', error);
     return NextResponse.json(
-      { success: false, error: error.message || 'حدث خطأ أثناء معالجة الطلب' },
+      { success: false, error: error.message || 'حدث خطأ أثناء معالجة طلب التوليد' },
       { status: 500 }
     );
   }
