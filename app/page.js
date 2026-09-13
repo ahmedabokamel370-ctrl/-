@@ -188,7 +188,7 @@ export default function HomePage() {
       {/* التذييل الثابت */}
       <footer className="py-6 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1 w-full max-w-xl">
         <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
-        <p>إعداد وتصميم: <span className="text-blue-400 font-bold">أحمد أشرف كامل</span></p>
+        <p>جميع الحقوق محفوظة © 2024</p>
       </footer>
     </div>
   );
