@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export default function StudentPage() {
   const [step, setStep] = useState('login');
@@ -17,7 +22,7 @@ export default function StudentPage() {
   const [result, setResult] = useState({ score: 0, total: 0 });
 
   const handleSubmitExam = useCallback(
-    (forcedByTimer = false) => {
+    async (forcedByTimer = false) => {
       if (!examData) return;
 
       let calculatedScore = 0;
@@ -34,6 +39,30 @@ export default function StudentPage() {
       const totalQuestions = examData.questions.length;
       setResult({ score: calculatedScore, total: totalQuestions });
 
+      // 1. حفظ النتيجة في Supabase لكي تظهر في لوحة المعلم
+      try {
+        const { error: subError } = await supabase
+          .from('submissions')
+          .insert([
+            {
+              pin: pin.trim(),
+              student_name: studentName.trim(),
+              score: calculatedScore,
+              total: totalQuestions,
+              wrong_answers: wrongQuestions, // تخزين مصفوفة الأخطاء
+              submitted_at: new Date().toISOString(),
+            },
+          ]);
+
+        if (subError) {
+          console.error('Error saving submission to Supabase:', subError.message, subError.details, subError.code);
+          alert('تعذر حفظ النتيجة في قاعدة البيانات: ' + subError.message);
+        }
+      } catch (err) {
+        console.error('Unexpected error saving submission:', err);
+      }
+
+      // 2. الحفظ المحلي الاحتياطي (LocalStorage)
       if (typeof window !== 'undefined') {
         const storedScores = JSON.parse(
           localStorage.getItem('exam_scores') || '[]'
@@ -43,7 +72,7 @@ export default function StudentPage() {
           pin: pin,
           score: calculatedScore,
           total: totalQuestions,
-          wrongQuestions: wrongQuestions, // إضافة الأسئلة الخاطئة للسجل
+          wrongQuestions: wrongQuestions,
           time: new Date().toLocaleTimeString('ar-EG', {
             hour: '2-digit',
             minute: '2-digit',
@@ -81,31 +110,45 @@ export default function StudentPage() {
     return () => clearInterval(timer);
   }, [step, timeLeft, handleSubmitExam]);
 
-  const handleStartExam = (e) => {
+  const handleStartExam = async (e) => {
     e.preventDefault();
     if (!studentName.trim()) return alert('يرجى كتابة اسمك الثلاثي');
     if (!pin.trim()) return alert('يرجى إدخال رمز PIN الخاص بالامتحان');
 
-    if (typeof window !== 'undefined') {
-      const savedExam = localStorage.getItem(`exam_${pin.trim()}`);
-      if (!savedExam) {
-        return alert('لم يتم العثور على امتحان بهذا الرمز!');
+    try {
+      const { data, error } = await supabase
+        .from('exams')
+        .select('*')
+        .eq('pin', pin.trim())
+        .maybeSingle();
+
+      if (error) {
+        console.error('Supabase Error:', error);
+        return alert('حدث خطأ أثناء الاتصال بقاعدة البيانات: ' + error.message);
       }
 
-      try {
-        const parsedExam = JSON.parse(savedExam);
-        if (!parsedExam.questions || parsedExam.questions.length === 0) {
-          return alert('هذا الامتحان لا يحتوي على أسئلة بعد!');
-        }
-
-        setExamData(parsedExam);
-        const durationInMinutes = parsedExam.duration || 10;
-        setTimeLeft(durationInMinutes * 60);
-        setUserAnswers({});
-        setStep('exam');
-      } catch {
-        alert('حدث خطأ أثناء قراءة بيانات الامتحان.');
+      if (!data) {
+        return alert('لم يتم العثور على امتحان بهذا الرمز في قاعدة البيانات!');
       }
+
+      const parsedExam = {
+        title: data.title || data.exam_data?.title || `امتحان مادة: ${data.topic || 'عام'}`,
+        questions: data.questions || data.exam_data?.questions,
+        duration: data.duration || data.exam_data?.duration || 10
+      };
+
+      if (!parsedExam.questions || parsedExam.questions.length === 0) {
+        return alert('هذا الامتحان لا يحتوي على أسئلة بعد!');
+      }
+
+      setExamData(parsedExam);
+      const durationInMinutes = parsedExam.duration || 10;
+      setTimeLeft(durationInMinutes * 60);
+      setUserAnswers({});
+      setStep('exam');
+    } catch (err) {
+      console.error('Error fetching exam:', err);
+      alert('حدث خطأ أثناء الاتصال بقاعدة البيانات.');
     }
   };
 
@@ -154,7 +197,7 @@ export default function StudentPage() {
                 <label className="block text-right text-xs text-gray-400 mb-1">رمز PIN للامتحان:</label>
                 <input
                   type="text"
-                  placeholder="أدخل الرمز (مثال: 1234)"
+                  placeholder="أدخل الرمز (مثال: 979980)"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                   className="w-full p-3 bg-[#0B0F19] border border-gray-700 rounded-xl text-center text-blue-400 font-mono font-bold text-lg focus:outline-none focus:border-blue-500"

@@ -2,11 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { createClient } from '@supabase/supabase-js';
+
+// إعداد اتصال Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default function TeacherPage() {
   const DEFAULT_PASSWORD = '123456';
   
-  // 🔒 تاريخ الميلاد الصحيح للتحقق من الهوية (قم بتغييره لتاريخ ميلادك الحقيقي YYYY-MM-DD)
+  // 🔒 تاريخ الميلاد الصحيح للتحقق من الهوية
   const CORRECT_BIRTH_DATE = '2011-08-19';
 
   const [currentPassword, setCurrentPassword] = useState(DEFAULT_PASSWORD);
@@ -57,24 +63,39 @@ export default function TeacherPage() {
     }
   };
 
-  const refreshData = () => {
+  // جلب البيانات من Supabase مع مطابقة أسماء الأعمدة لديك
+  const refreshData = async () => {
     if (typeof window === 'undefined') return;
-    const examsList = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith('exam_') && key !== 'exam_scores') {
-        try {
-          const data = JSON.parse(localStorage.getItem(key));
-          const examPin = key.replace('exam_', '');
-          examsList.push({ pin: examPin, ...data });
-        } catch (e) {
-          console.error('Error parsing exam key:', key, e);
-        }
+    try {
+      // جلب الامتحانات
+      const { data: examsData, error: examsError } = await supabase.from('exams').select('*');
+      if (examsError) {
+        console.error('Error fetching exams:', examsError);
+      } else {
+        const formattedExams = (examsData || []).map((e) => ({
+          ...e,
+          title: e.topic || 'بدون عنوان',
+        }));
+        setSavedExams(formattedExams);
       }
+
+      // جلب النتائج من جدول submissions
+      const { data: scoresData, error: scoresError } = await supabase.from('submissions').select('*');
+      if (scoresError) {
+        console.error('Error fetching scores:', scoresError);
+      } else {
+        const formattedScores = (scoresData || []).map((s) => ({
+          ...s,
+          name: s.student_name,
+          pin: s.exam_pin || s.pin,
+          total: s.total_questions || s.total,
+          wrongList: s.wrong_answers || [], // ربط عمود wrong_answers من القاعدة
+        }));
+        setScores(formattedScores);
+      }
+    } catch (e) {
+      console.error('Error refreshing data from Supabase:', e);
     }
-    setSavedExams(examsList);
-    const storedScores = JSON.parse(localStorage.getItem('exam_scores') || '[]');
-    setScores(storedScores);
   };
 
   useEffect(() => {
@@ -97,13 +118,11 @@ export default function TeacherPage() {
     sessionStorage.removeItem('teacher_authenticated');
   };
 
-  // فتح نافذة التحقق لإعادة الضبط
   const handleOpenResetModal = () => {
     setBirthDateInput('');
     setShowResetModal(true);
   };
 
-  // تأكيد إجابة سؤال الأمان وإعادة الضبط
   const handleConfirmReset = (e) => {
     e.preventDefault();
     if (birthDateInput === CORRECT_BIRTH_DATE) {
@@ -127,11 +146,17 @@ export default function TeacherPage() {
     alert('تم حفظ كلمة المرور الجديدة بنجاح');
   };
 
-  const handleResetScores = () => {
+  const handleResetScores = async () => {
     if (confirm('هل أنت تأكد من إعادة ضبط ومسح جميع نتائج الطلاب والأوائل؟')) {
-      localStorage.removeItem('exam_scores');
-      setScores([]);
-      alert('تم مسح وإعادة ضبط قائمة الأوائل بنجاح');
+      try {
+        const { error } = await supabase.from('submissions').delete().not('id', 'is', null);
+        if (error) throw error;
+        setScores([]);
+        alert('تم مسح وإعادة ضبط قائمة الأوائل بنجاح من قاعدة البيانات');
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء مسح النتائج');
+      }
     }
   };
 
@@ -161,12 +186,18 @@ export default function TeacherPage() {
     document.body.removeChild(link);
   };
 
-  const handleDeleteSingleScore = (scoreObj) => {
+  const handleDeleteSingleScore = async (scoreObj) => {
     if (confirm(`هل تريد حذف نتيجة الطالب (${scoreObj.name})؟`)) {
-      const updated = scores.filter((s) => s !== scoreObj);
-      localStorage.setItem('exam_scores', JSON.stringify(updated));
-      setScores(updated);
-      alert('تم حذف نتيجة الطالب بنجاح.');
+      try {
+        const { error } = await supabase.from('submissions').delete().eq('id', scoreObj.id);
+        if (error) throw error;
+        const updated = scores.filter((s) => s.id !== scoreObj.id);
+        setScores(updated);
+        alert('تم حذف نتيجة الطالب بنجاح.');
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء حذف النتيجة');
+      }
     }
   };
 
@@ -255,25 +286,58 @@ export default function TeacherPage() {
     setQuestions(questions.filter((_, i) => i !== idx));
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
     if (questions.length === 0) return alert('لا توجد أسئلة لنشرها!');
     if (!pin.trim()) return alert('يرجى تحديد PIN للامتحان');
-    const examData = { title, duration: Number(duration), questions };
-    localStorage.setItem(`exam_${pin.trim()}`, JSON.stringify(examData));
-    refreshData();
-    setSelectedPin(pin.trim());
-    alert(`تم حفظ ونشر الامتحان بنجاح تحت الـ PIN: ${pin.trim()}`);
+    
+    try {
+      const examData = {
+        pin: pin.trim(),
+        topic: title,
+        questions
+      };
+
+      const { error } = await supabase
+        .from('exams')
+        .upsert([examData], { onConflict: 'pin' });
+
+      if (error) throw error;
+
+      await refreshData();
+      setSelectedPin(pin.trim());
+      alert(`تم حفظ ونشر الامتحان بنجاح تحت الـ PIN: ${pin.trim()}`);
+    } catch (err) {
+      console.error(err);
+      alert('حدث خطأ أثناء حفظ ونشر الامتحان');
+    }
   };
 
-  const handleDeleteExam = (targetPin = pin) => {
-    if (confirm(`هل تريد حذف الامتحان PIN: ${targetPin}؟`)) {
-      localStorage.removeItem(`exam_${targetPin}`);
-      refreshData();
-      if (selectedPin === targetPin) {
-        setSelectedPin('');
-        setQuestions([]);
+  // 🗑️ تعديل دالة حذف الامتحان لحذف نتائجه المرتبطة من جدول submissions أيضاً
+  const handleDeleteExam = async (targetPin = pin) => {
+    if (confirm(`هل تريد حذف الامتحان PIN: ${targetPin} وجميع درجات الطلاب المرتبطة به نهائياً؟`)) {
+      try {
+        // 1. حذف نتائج الطلاب المرتبطة بهذا الـ PIN
+        await supabase.from('submissions').delete().eq('exam_pin', targetPin);
+        await supabase.from('submissions').delete().eq('pin', targetPin);
+
+        // 2. حذف الامتحان نفسه من جدول exams
+        const { error } = await supabase
+          .from('exams')
+          .delete()
+          .eq('pin', targetPin);
+
+        if (error) throw error;
+
+        await refreshData();
+        if (selectedPin === targetPin) {
+          setSelectedPin('');
+          setQuestions([]);
+        }
+        alert('تم حذف الامتحان ونتائجه بنجاح.');
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء حذف الامتحان');
       }
-      alert('تم حذف الامتحان.');
     }
   };
 
@@ -290,7 +354,7 @@ export default function TeacherPage() {
     const errorCounts = {};
 
     filteredScores.forEach((score) => {
-      const wrongList = score.wrongQuestions || score.wrongIndices || score.incorrectAnswers || [];
+      const wrongList = score.wrongList || score.wrong_answers || [];
       wrongList.forEach((qIdx) => {
         if (typeof qIdx === 'number') {
           errorCounts[qIdx] = (errorCounts[qIdx] || 0) + 1;
@@ -356,7 +420,6 @@ export default function TeacherPage() {
           </div>
         </div>
 
-        {/* نافذة التحقق من الهوية عند إعاده الضبط */}
         {showResetModal && (
           <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
             <div className="bg-[#131B2E] border border-gray-700 p-6 rounded-2xl max-w-sm w-full space-y-4 text-right shadow-2xl">
@@ -406,7 +469,6 @@ export default function TeacherPage() {
   return (
     <div className="min-h-screen bg-[#0B0F19] text-white p-4 md:p-8 font-sans flex flex-col justify-between" dir="rtl">
       <div className="max-w-5xl mx-auto space-y-6 w-full">
-        {/* الهيدر الرئيسي */}
         <header className="flex flex-wrap items-center justify-between bg-[#131B2E] p-4 md:p-6 rounded-2xl border border-gray-800 gap-4 shadow-xl">
           <div>
             <h1 className="text-xl font-bold">⚙️ لوحة المعلم المركزية</h1>
@@ -468,7 +530,6 @@ export default function TeacherPage() {
           </div>
         </header>
 
-        {/* شريط اختيار الامتحانات السابقة */}
         <div className="bg-[#131B2E] p-4 rounded-2xl border border-gray-800 flex flex-wrap items-center justify-between gap-4">
           <div className="flex-1 min-w-[280px]">
             <label className="block text-xs text-gray-400 mb-1 font-bold">اختر امتحاناً سابقاً لعرضه أو تعديله:</label>
@@ -505,7 +566,6 @@ export default function TeacherPage() {
 
         {activeTab === 'create' ? (
           <>
-            {/* مولد الأسئلة الذكي والإعدادات */}
             <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-4">
               <h2 className="text-lg font-bold text-blue-400">🤖 مولد الأسئلة والإعدادات السريعة</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-[#0B0F19] p-4 rounded-xl border border-gray-800">
@@ -532,7 +592,6 @@ export default function TeacherPage() {
                 </div>
               </div>
 
-              {/* مفتاح API مخصص */}
               <div className="bg-[#0B0F19] p-4 rounded-xl border border-gray-800 space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-xs font-bold text-gray-300">🔑 مفتاح API خاص (Groq API)</label>
@@ -587,7 +646,6 @@ export default function TeacherPage() {
               </button>
             </div>
 
-            {/* إعدادات وتعديل الأسئلة */}
             <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-6">
               <div className="flex flex-wrap justify-between items-center gap-4 border-b border-gray-800 pb-4">
                 <div className="flex-1 min-w-[200px]">
@@ -623,7 +681,6 @@ export default function TeacherPage() {
                 </div>
               </div>
 
-              {/* قائمة الأسئلة */}
               <div className="space-y-4">
                 {questions.map((q, qIdx) => (
                   <div key={qIdx} className="p-4 bg-[#0B0F19] rounded-xl border border-gray-800 space-y-3">
@@ -696,7 +753,6 @@ export default function TeacherPage() {
             </div>
           </>
         ) : (
-          /* تبويب قائمة الأوائل والنتائج والأخطاء الشائعة */
           <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-800 pb-3">
               <h2 className="text-lg font-bold text-amber-400">🏆 نتائج وأوائل الطلاب</h2>
@@ -716,7 +772,6 @@ export default function TeacherPage() {
               </div>
             </div>
 
-            {/* حقل البحث عن اسم طالب */}
             <div className="bg-[#0B0F19] p-3 rounded-xl border border-gray-800">
               <input
                 type="text"
@@ -727,7 +782,6 @@ export default function TeacherPage() {
               />
             </div>
 
-            {/* قسم تحليل الأخطاء الشائعة */}
             <div className="bg-[#0B0F19] p-4 rounded-xl border border-gray-800 space-y-3">
               <div className="flex items-center justify-between border-b border-gray-800 pb-2">
                 <h3 className="text-xs font-bold text-red-400 flex items-center gap-1.5">
@@ -744,23 +798,20 @@ export default function TeacherPage() {
                   return <p className="text-xs text-gray-500 text-center py-4">لا توجد بيانات نتائج متاحة للتحليل حتى الآن.</p>;
                 }
                 if (mistakes.length === 0) {
-                  return <p className="text-xs text-emerald-400 text-center py-4">🎉 ممتاز! لا توجد أخطاء متكررة لدى الطلاب.</p>;
+                  return <p className="text-xs text-emerald-400 text-center py-4">🎉 ممتاز! لا توجد أخطاء شائعة مسجلة حتى الآن.</p>;
                 }
                 return (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {mistakes.map((m, idx) => (
-                      <div key={idx} className="p-3 bg-[#131B2E] rounded-lg border border-red-500/20 space-y-1.5">
-                        <div className="flex justify-between items-start gap-2">
-                          <p className="text-xs font-semibold text-gray-200 flex-1">{m.questionText}</p>
-                          <span className="text-[10px] font-bold bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/30 shrink-0">
-                            أخطأ فيه {m.wrongCount} طالب ({m.percentage}%)
-                          </span>
+                      <div key={idx} className="bg-[#131B2E] p-3 rounded-xl border border-gray-800 flex justify-between items-center gap-4">
+                        <div>
+                          <p className="text-xs font-bold text-white">{m.questionText}</p>
+                          <p className="text-[10px] text-gray-400 mt-0.5">الإجابة الصحيحة: <span className="text-emerald-400 font-semibold">{m.correctAnswer}</span></p>
                         </div>
-                        {m.correctAnswer && (
-                          <p className="text-[11px] text-emerald-400 font-medium">
-                            ✓ الإجابة الصحيحة: {m.correctAnswer}
-                          </p>
-                        )}
+                        <div className="text-left min-w-[90px]">
+                          <span className="text-xs font-bold text-red-400">{m.wrongCount} أخطاء</span>
+                          <span className="block text-[10px] text-gray-400">({m.percentage}% من الطلاب)</span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -768,52 +819,47 @@ export default function TeacherPage() {
               })()}
             </div>
 
-            {/* جدول نتائج الطلاب */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-right text-xs">
-                <thead>
-                  <tr className="bg-[#0B0F19] text-gray-400 border-b border-gray-800">
-                    <th className="p-3">#</th>
-                    <th className="p-3">اسم الطالب</th>
-                    <th className="p-3">PIN</th>
-                    <th className="p-3">الدرجة</th>
-                    <th className="p-3">الوقت</th>
-                    <th className="p-3 text-center">إجراءات</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredScores.length === 0 ? (
-                    <tr>
-                      <td colSpan="6" className="p-6 text-center text-gray-500">
-                        لا توجد نتائج مسجلة حتى الآن
-                      </td>
+            <div className="bg-[#0B0F19] p-4 rounded-xl border border-gray-800 space-y-3">
+              <h3 className="text-xs font-bold text-amber-400">📋 سجل نتائج الطلاب المفصل</h3>
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400">
+                      <th className="pb-2">#</th>
+                      <th className="pb-2">اسم الطالب</th>
+                      <th className="pb-2">PIN</th>
+                      <th className="pb-2">الدرجة</th>
+                      <th className="pb-2">الوقت</th>
+                      <th className="pb-2 text-center">إجراء</th>
                     </tr>
-                  ) : (
-                    filteredScores.map((s, idx) => (
-                      <tr key={idx} className="border-b border-gray-800/50 hover:bg-[#0B0F19]/50 transition">
-                        <td className="p-3 font-bold text-amber-400">{idx + 1}</td>
-                        <td className="p-3 font-semibold text-white">{s.name || 'بدون اسم'}</td>
-                        <td className="p-3 text-blue-400 font-mono">{s.pin || '-'}</td>
-                        <td className="p-3">
-                          <span className="px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded-lg font-bold border border-emerald-500/20">
-                            {s.score} / {s.total}
-                          </span>
-                        </td>
-                        <td className="p-3 text-gray-400 dir-ltr text-right">{s.time || '-'}</td>
-                        <td className="p-3 text-center">
-                          <button
-                            onClick={() => handleDeleteSingleScore(s)}
-                            className="p-1.5 bg-red-600/20 text-red-400 border border-red-500/30 rounded-lg hover:bg-red-600/30 transition"
-                            title="حذف هذه النتيجة"
-                          >
-                            🗑️
-                          </button>
-                        </td>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/50">
+                    {filteredScores.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" className="text-center py-4 text-gray-500">لا توجد نتائج مطابقة للبحث.</td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      filteredScores.map((s, idx) => (
+                        <tr key={idx} className="hover:bg-gray-900/40 transition">
+                          <td className="py-2.5 text-gray-400">{idx + 1}</td>
+                          <td className="py-2.5 font-bold text-white">{s.name}</td>
+                          <td className="py-2.5 font-mono text-blue-400">{s.pin}</td>
+                          <td className="py-2.5 font-bold text-emerald-400">{s.score} / {s.total}</td>
+                          <td className="py-2.5 text-gray-400 text-[11px]">{s.time}</td>
+                          <td className="py-2.5 text-center">
+                            <button
+                              onClick={() => handleDeleteSingleScore(s)}
+                              className="text-red-400 hover:text-red-300 bg-red-600/10 border border-red-500/20 px-2 py-1 rounded-lg text-[10px] transition"
+                            >
+                              حذف
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
