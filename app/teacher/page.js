@@ -249,11 +249,13 @@ export default function TeacherPage() {
       if (res.ok && data.questions) {
         const formattedQuestions = data.questions.map((q) => ({
           text: q.question || q.text || '',
+          type: q.type || 'mcq',
           options: q.options || ['', '', '', ''],
           correctOption:
             typeof q.correctAnswer === 'number'
               ? q.correctAnswer
               : q.correctOption || 0,
+          correctAnswer: q.correctAnswer || q.correctText || ''
         }));
         setQuestions(formattedQuestions);
         if (data.title && (!title || title === 'اختبار جديد')) {
@@ -276,6 +278,7 @@ export default function TeacherPage() {
       ...questions,
       {
         text: 'سؤال جديد...',
+        type: 'mcq',
         options: ['خيار 1', 'خيار 2', 'خيار 3', 'خيار 4'],
         correctOption: 0,
       },
@@ -294,6 +297,7 @@ export default function TeacherPage() {
       const examData = {
         pin: pin.trim(),
         topic: title,
+        duration,
         questions
       };
 
@@ -312,15 +316,12 @@ export default function TeacherPage() {
     }
   };
 
-  // 🗑️ تعديل دالة حذف الامتحان لحذف نتائجه المرتبطة من جدول submissions أيضاً
   const handleDeleteExam = async (targetPin = pin) => {
     if (confirm(`هل تريد حذف الامتحان PIN: ${targetPin} وجميع درجات الطلاب المرتبطة به نهائياً؟`)) {
       try {
-        // 1. حذف نتائج الطلاب المرتبطة بهذا الـ PIN
         await supabase.from('submissions').delete().eq('exam_pin', targetPin);
         await supabase.from('submissions').delete().eq('pin', targetPin);
 
-        // 2. حذف الامتحان نفسه من جدول exams
         const { error } = await supabase
           .from('exams')
           .delete()
@@ -370,11 +371,16 @@ export default function TeacherPage() {
       .map((q, idx) => {
         const count = errorCounts[idx] || 0;
         const percentage = totalStudents > 0 ? Math.round((count / totalStudents) * 100) : 0;
+        let correctDisplay = '';
+        if (q.type === 'short_answer') correctDisplay = q.correctAnswer;
+        else if (q.type === 'true_false') correctDisplay = q.correctAnswer ?? q.correctOption;
+        else correctDisplay = q.options ? q.options[q.correctOption] : '';
+
         return {
           questionText: q.text || `سؤال #${idx + 1}`,
           wrongCount: count,
           percentage,
-          correctAnswer: q.options ? q.options[q.correctOption] : '',
+          correctAnswer: correctDisplay,
         };
       })
       .filter((item) => item.wrongCount > 0)
@@ -629,7 +635,7 @@ export default function TeacherPage() {
                   <label className="block text-xs text-gray-400 mb-1">✍️ البرومبت (Prompt)</label>
                   <input
                     type="text"
-                    placeholder="مثال: أسئلة اختيار من متعدد عن قواعد اللغة الإنجليزية"
+                    placeholder="مثال: أسئلة متنوعة عن قواعد اللغة الإنجليزية"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     className="w-full p-2.5 bg-[#0B0F19] border border-gray-700 rounded-xl text-xs text-white"
@@ -682,58 +688,133 @@ export default function TeacherPage() {
               </div>
 
               <div className="space-y-4">
-                {questions.map((q, qIdx) => (
-                  <div key={qIdx} className="p-4 bg-[#0B0F19] rounded-xl border border-gray-800 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs text-blue-400 font-bold">سؤال #{qIdx + 1}</span>
-                      <button
-                        onClick={() => handleDeleteQuestion(qIdx)}
-                        className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-600/30 transition"
-                      >
-                        🗑️ حذف
-                      </button>
-                    </div>
-                    <input
-                      type="text"
-                      value={q.text}
-                      onChange={(e) => {
-                        const newQ = [...questions];
-                        newQ[qIdx] = { ...newQ[qIdx], text: e.target.value };
-                        setQuestions(newQ);
-                      }}
-                      className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-sm text-white font-semibold"
-                    />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {q.options.map((opt, oIdx) => (
-                        <div key={oIdx} className="flex items-center gap-2">
-                          <input
-                            type="radio"
-                            name={`correct-${qIdx}`}
-                            checked={q.correctOption === oIdx}
-                            onChange={() => {
+                {questions.map((q, qIdx) => {
+                  const qType = q.type || 'mcq';
+                  return (
+                    <div key={qIdx} className="p-4 bg-[#0B0F19] rounded-xl border border-gray-800 space-y-3">
+                      <div className="flex flex-wrap justify-between items-center gap-2">
+                        <span className="text-xs text-blue-400 font-bold">سؤال #{qIdx + 1}</span>
+                        
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={qType}
+                            onChange={(e) => {
+                              const newType = e.target.value;
                               const newQ = [...questions];
-                              newQ[qIdx] = { ...newQ[qIdx], correctOption: oIdx };
+                              newQ[qIdx] = {
+                                ...newQ[qIdx],
+                                type: newType,
+                                options: newType === 'true_false' ? ['صح', 'خطأ'] : (newQ[qIdx].options || ['', '', '', '']),
+                                correctOption: newType === 'true_false' ? 'صح' : 0,
+                                correctAnswer: newType === 'short_answer' ? (newQ[qIdx].correctAnswer || '') : ''
+                              };
                               setQuestions(newQ);
                             }}
-                            className="accent-green-500 cursor-pointer"
-                          />
+                            className="p-1.5 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-white focus:outline-none"
+                          >
+                            <option value="mcq">اختيار من متعدد</option>
+                            <option value="true_false">صح وخطأ</option>
+                            <option value="short_answer">إجابة نصية قصيرة</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteQuestion(qIdx)}
+                            className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-600/30 transition"
+                          >
+                            🗑️ حذف
+                          </button>
+                        </div>
+                      </div>
+
+                      <input
+                        type="text"
+                        value={q.text}
+                        onChange={(e) => {
+                          const newQ = [...questions];
+                          newQ[qIdx] = { ...newQ[qIdx], text: e.target.value };
+                          setQuestions(newQ);
+                        }}
+                        placeholder="نص السؤال..."
+                        className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-sm text-white font-semibold"
+                      />
+
+                      {/* عرض خيارات الإجابة حسب نوع السؤال */}
+                      {qType === 'short_answer' ? (
+                        <div className="space-y-1">
+                          <label className="block text-[11px] text-gray-400">الإجابة الصحيحة النموذجية:</label>
                           <input
                             type="text"
-                            value={opt}
+                            value={q.correctAnswer ?? ''}
                             onChange={(e) => {
                               const newQ = [...questions];
-                              const newOptions = [...newQ[qIdx].options];
-                              newOptions[oIdx] = e.target.value;
-                              newQ[qIdx] = { ...newQ[qIdx], options: newOptions };
+                              newQ[qIdx] = { ...newQ[qIdx], correctAnswer: e.target.value };
                               setQuestions(newQ);
                             }}
-                            className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-gray-300"
+                            placeholder="اكتب الإجابة الصحيحة المقبولة للطالب..."
+                            className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-emerald-400 font-medium"
                           />
                         </div>
-                      ))}
+                      ) : qType === 'true_false' ? (
+                        <div className="space-y-2">
+                          <label className="block text-[11px] text-gray-400">حدد الإجابة الصحيحة:</label>
+                          <div className="flex gap-4">
+                            {['صح', 'خطأ'].map((opt, oIdx) => {
+                              const isCorrect = String(q.correctAnswer ?? q.correctOption) === opt;
+                              return (
+                                <label key={oIdx} className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
+                                  <input
+                                    type="radio"
+                                    name={`correct-tf-${qIdx}`}
+                                    checked={isCorrect}
+                                    onChange={() => {
+                                      const newQ = [...questions];
+                                      newQ[qIdx] = { ...newQ[qIdx], correctAnswer: opt, correctOption: opt };
+                                      setQuestions(newQ);
+                                    }}
+                                    className="accent-green-500 cursor-pointer"
+                                  />
+                                  <span className={isCorrect ? 'text-emerald-400 font-bold' : ''}>{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {(q.options || ['', '', '', '']).map((opt, oIdx) => (
+                            <div key={oIdx} className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name={`correct-${qIdx}`}
+                                checked={q.correctOption === oIdx}
+                                onChange={() => {
+                                  const newQ = [...questions];
+                                  newQ[qIdx] = { ...newQ[qIdx], correctOption: oIdx };
+                                  setQuestions(newQ);
+                                }}
+                                className="accent-green-500 cursor-pointer"
+                              />
+                              <input
+                                type="text"
+                                value={opt}
+                                onChange={(e) => {
+                                  const newQ = [...questions];
+                                  const newOptions = [...(newQ[qIdx].options || ['', '', '', ''])];
+                                  newOptions[oIdx] = e.target.value;
+                                  newQ[qIdx] = { ...newQ[qIdx], options: newOptions };
+                                  setQuestions(newQ);
+                                }}
+                                placeholder={`الخيار ${oIdx + 1}`}
+                                className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-gray-300"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="flex flex-wrap gap-3">

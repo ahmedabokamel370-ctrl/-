@@ -29,7 +29,30 @@ export default function StudentPage() {
       const wrongQuestions = []; // تجميع أرقام الأسئلة الخاطئة
 
       examData.questions.forEach((q, index) => {
-        if (userAnswers[index] === q.correctOption) {
+        const studentAns = userAnswers[index];
+        let isCorrect = false;
+        const qType = q.type || 'mcq';
+
+        if (qType === 'short_answer') {
+          // مقارنة النص المدخل مع الإجابة الصحيحة مع تجاهل المسافات وحالة الأحرف
+          const studentText = String(studentAns || '').trim().toLowerCase();
+          const correctText = String(q.correctAnswer ?? q.correctOption ?? '').trim().toLowerCase();
+          if (studentText && studentText === correctText) {
+            isCorrect = true;
+          }
+        } else if (qType === 'true_false') {
+          // مقارنة إجابة صح/خطأ
+          if (studentAns !== undefined && String(studentAns) === String(q.correctAnswer ?? q.correctOption)) {
+            isCorrect = true;
+          }
+        } else {
+          // الاختيار من متعدد الاعتيادي (MCQ)
+          if (studentAns === q.correctOption) {
+            isCorrect = true;
+          }
+        }
+
+        if (isCorrect) {
           calculatedScore += 1;
         } else {
           wrongQuestions.push(index); // حفظ مؤشر السؤال الخاطئ
@@ -158,13 +181,6 @@ export default function StudentPage() {
     return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const handleOptionSelect = (questionIndex, optionIndex) => {
-    setUserAnswers((prev) => ({
-      ...prev,
-      [questionIndex]: optionIndex,
-    }));
-  };
-
   return (
     <div className="min-h-screen bg-[#0B0F19] text-white flex flex-col justify-between p-4 md:p-8 font-sans" dir="rtl">
       
@@ -238,42 +254,71 @@ export default function StudentPage() {
           </div>
 
           <div className="space-y-6">
-            {examData.questions.map((q, qIdx) => (
-              <div key={qIdx} className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs bg-blue-600/20 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-lg font-bold">
-                    سؤال {qIdx + 1} من {examData.questions.length}
-                  </span>
-                  {userAnswers[qIdx] !== undefined && (
-                    <span className="text-xs text-emerald-400 font-semibold">✓ تم الاختيار</span>
+            {examData.questions.map((q, qIdx) => {
+              const qType = q.type || 'mcq';
+              return (
+                <div key={qIdx} className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs bg-blue-600/20 text-blue-400 border border-blue-500/30 px-3 py-1 rounded-lg font-bold">
+                      سؤال {qIdx + 1} من {examData.questions.length}
+                    </span>
+                    {userAnswers[qIdx] !== undefined && userAnswers[qIdx] !== '' && (
+                      <span className="text-xs text-emerald-400 font-semibold">✓ تم الإجابة</span>
+                    )}
+                  </div>
+
+                  <p className="text-sm font-semibold text-white leading-relaxed">{q.text}</p>
+
+                  {/* عرض حقل الكتابة أو الأزرار بناءً على نوع السؤال */}
+                  {qType === 'short_answer' ? (
+                    <div className="pt-2">
+                      <input
+                        type="text"
+                        placeholder="اكتب إجابتك هنا..."
+                        value={userAnswers[qIdx] || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setUserAnswers((prev) => ({
+                            ...prev,
+                            [qIdx]: val,
+                          }));
+                        }}
+                        className="w-full p-3.5 bg-[#0B0F19] border border-gray-700 rounded-xl text-white text-right focus:outline-none focus:border-blue-500 text-xs transition"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2 pt-2">
+                      {(qType === 'true_false' ? ['صح', 'خطأ'] : (q.options || [])).map((opt, oIdx) => {
+                        const optionValue = qType === 'true_false' ? opt : oIdx;
+                        const isSelected = userAnswers[qIdx] === optionValue;
+                        return (
+                          <button
+                            key={oIdx}
+                            type="button"
+                            onClick={() => {
+                              setUserAnswers((prev) => ({
+                                ...prev,
+                                [qIdx]: optionValue,
+                              }));
+                            }}
+                            className={`w-full text-right p-3.5 rounded-xl border text-xs font-medium transition flex items-center justify-between ${
+                              isSelected
+                                ? 'bg-blue-600/20 border-blue-500 text-white font-bold'
+                                : 'bg-[#0B0F19] border-gray-800 text-gray-300 hover:border-gray-700'
+                            }`}
+                          >
+                            <span>{opt}</span>
+                            <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? 'border-blue-400 bg-blue-500' : 'border-gray-600'}`}>
+                              {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white"></span>}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
-
-                <p className="text-sm font-semibold text-white leading-relaxed">{q.text}</p>
-
-                <div className="space-y-2 pt-2">
-                  {q.options.map((opt, oIdx) => {
-                    const isSelected = userAnswers[qIdx] === oIdx;
-                    return (
-                      <button
-                        key={oIdx}
-                        onClick={() => handleOptionSelect(qIdx, oIdx)}
-                        className={`w-full text-right p-3.5 rounded-xl border text-xs font-medium transition flex items-center justify-between ${
-                          isSelected
-                            ? 'bg-blue-600/20 border-blue-500 text-white font-bold'
-                            : 'bg-[#0B0F19] border-gray-800 text-gray-300 hover:border-gray-700'
-                        }`}
-                      >
-                        <span>{opt}</span>
-                        <span className={`w-4 h-4 rounded-full border flex items-center justify-center ${isSelected ? 'border-blue-400 bg-blue-500' : 'border-gray-600'}`}>
-                          {isSelected && <span className="w-1.5 h-1.5 rounded-full bg-white"></span>}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <button
