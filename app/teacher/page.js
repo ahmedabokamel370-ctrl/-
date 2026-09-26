@@ -25,6 +25,10 @@ export default function TeacherPage() {
   const [selectedPin, setSelectedPin] = useState('');
   const [customApiKey, setCustomApiKey] = useState('');
   const [searchStudent, setSearchStudent] = useState('');
+  
+  // حالة قائمة الطلاب المسجلين
+  const [studentsList, setStudentsList] = useState([]);
+  const [searchRegisteredStudent, setSearchRegisteredStudent] = useState('');
 
   // حالة نافذة التحقق من الهوية لإعادة الضبط
   const [showResetModal, setShowResetModal] = useState(false);
@@ -92,6 +96,14 @@ export default function TeacherPage() {
           wrongList: s.wrong_answers || [], // ربط عمود wrong_answers من القاعدة
         }));
         setScores(formattedScores);
+      }
+
+      // جلب الطلاب المسجلين من جدول students
+      const { data: studentsData, error: studentsError } = await supabase.from('students').select('*');
+      if (studentsError) {
+        console.error('Error fetching students:', studentsError);
+      } else {
+        setStudentsList(studentsData || []);
       }
     } catch (e) {
       console.error('Error refreshing data from Supabase:', e);
@@ -201,6 +213,21 @@ export default function TeacherPage() {
     }
   };
 
+  // 🗑️ دالة حذف طالب من جدول students نهائياً
+  const handleDeleteStudentAccount = async (studentObj) => {
+    if (confirm(`هل أنت متأكد من حذف حساب الطالب (${studentObj.name}) نهائياً؟ لن يتمكن من تسجيل الدخول بعد الآن.`)) {
+      try {
+        const { error } = await supabase.from('students').delete().eq('id', studentObj.id);
+        if (error) throw error;
+        setStudentsList(studentsList.filter((s) => s.id !== studentObj.id));
+        alert('تم حذف حساب الطالب بنجاح من قاعدة البيانات.');
+      } catch (err) {
+        console.error(err);
+        alert('حدث خطأ أثناء حذف الطالب');
+      }
+    }
+  };
+
   const handleSelectExam = (selectedExamPin) => {
     setSelectedPin(selectedExamPin);
     if (!selectedExamPin) return;
@@ -249,13 +276,11 @@ export default function TeacherPage() {
       if (res.ok && data.questions) {
         const formattedQuestions = data.questions.map((q) => ({
           text: q.question || q.text || '',
-          type: q.type || 'mcq',
           options: q.options || ['', '', '', ''],
           correctOption:
             typeof q.correctAnswer === 'number'
               ? q.correctAnswer
               : q.correctOption || 0,
-          correctAnswer: q.correctAnswer || q.correctText || ''
         }));
         setQuestions(formattedQuestions);
         if (data.title && (!title || title === 'اختبار جديد')) {
@@ -278,7 +303,6 @@ export default function TeacherPage() {
       ...questions,
       {
         text: 'سؤال جديد...',
-        type: 'mcq',
         options: ['خيار 1', 'خيار 2', 'خيار 3', 'خيار 4'],
         correctOption: 0,
       },
@@ -297,7 +321,6 @@ export default function TeacherPage() {
       const examData = {
         pin: pin.trim(),
         topic: title,
-        duration,
         questions
       };
 
@@ -316,12 +339,15 @@ export default function TeacherPage() {
     }
   };
 
+  // 🗑️ تعديل دالة حذف الامتحان لحذف نتائجه المرتبطة من جدول submissions أيضاً
   const handleDeleteExam = async (targetPin = pin) => {
     if (confirm(`هل تريد حذف الامتحان PIN: ${targetPin} وجميع درجات الطلاب المرتبطة به نهائياً؟`)) {
       try {
+        // 1. حذف نتائج الطلاب المرتبطة بهذا الـ PIN
         await supabase.from('submissions').delete().eq('exam_pin', targetPin);
         await supabase.from('submissions').delete().eq('pin', targetPin);
 
+        // 2. حذف الامتحان نفسه من جدول exams
         const { error } = await supabase
           .from('exams')
           .delete()
@@ -345,6 +371,10 @@ export default function TeacherPage() {
   const filteredScores = scores
     .filter((s) => (!selectedPin ? true : String(s.pin) === String(selectedPin)))
     .filter((s) => (!searchStudent.trim() ? true : s.name?.toLowerCase().includes(searchStudent.toLowerCase())));
+
+  const filteredRegisteredStudents = studentsList.filter((s) =>
+    !searchRegisteredStudent.trim() ? true : s.name?.toLowerCase().includes(searchRegisteredStudent.toLowerCase())
+  );
 
   const getCommonMistakes = () => {
     const currentExam = savedExams.find((e) => String(e.pin) === String(selectedPin));
@@ -371,16 +401,11 @@ export default function TeacherPage() {
       .map((q, idx) => {
         const count = errorCounts[idx] || 0;
         const percentage = totalStudents > 0 ? Math.round((count / totalStudents) * 100) : 0;
-        let correctDisplay = '';
-        if (q.type === 'short_answer') correctDisplay = q.correctAnswer;
-        else if (q.type === 'true_false') correctDisplay = q.correctAnswer ?? q.correctOption;
-        else correctDisplay = q.options ? q.options[q.correctOption] : '';
-
         return {
           questionText: q.text || `سؤال #${idx + 1}`,
           wrongCount: count,
           percentage,
-          correctAnswer: correctDisplay,
+          correctAnswer: q.options ? q.options[q.correctOption] : '',
         };
       })
       .filter((item) => item.wrongCount > 0)
@@ -478,7 +503,7 @@ export default function TeacherPage() {
         <header className="flex flex-wrap items-center justify-between bg-[#131B2E] p-4 md:p-6 rounded-2xl border border-gray-800 gap-4 shadow-xl">
           <div>
             <h1 className="text-xl font-bold">⚙️ لوحة المعلم المركزية</h1>
-            <p className="text-xs text-gray-400 mt-1">إعداد الأسئلة ومتابعة النتائج</p>
+            <p className="text-xs text-gray-400 mt-1">إعداد الأسئلة ومتابعة النتائج والطلاب</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 relative">
             <Link
@@ -502,6 +527,14 @@ export default function TeacherPage() {
               }`}
             >
               🏆 الأوائل
+            </button>
+            <button
+              onClick={() => setActiveTab('students')}
+              className={`px-3 py-2 rounded-xl text-xs font-bold ${
+                activeTab === 'students' ? 'bg-purple-600 text-white' : 'bg-gray-800 text-gray-400'
+              }`}
+            >
+              👨‍🎓 إدارة الطلاب
             </button>
             <button
               onClick={() => setShowChangePass(!showChangePass)}
@@ -536,39 +569,41 @@ export default function TeacherPage() {
           </div>
         </header>
 
-        <div className="bg-[#131B2E] p-4 rounded-2xl border border-gray-800 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex-1 min-w-[280px]">
-            <label className="block text-xs text-gray-400 mb-1 font-bold">اختر امتحاناً سابقاً لعرضه أو تعديله:</label>
-            <select
-              value={selectedPin}
-              onChange={(e) => handleSelectExam(e.target.value)}
-              className="w-full p-2.5 bg-[#0B0F19] border border-blue-500/40 rounded-xl text-white text-sm font-bold focus:outline-none"
-            >
-              <option value="">-- اختر امتحاناً ({savedExams.length} امتحانات) --</option>
-              {savedExams.map((exam) => (
-                <option key={exam.pin} value={exam.pin}>
-                  📌 {exam.title} (PIN: {exam.pin}) - {exam.questions?.length || 0} سؤال - {exam.duration || 10} دقيقة
-                </option>
-              ))}
-            </select>
-          </div>
-          {selectedPin && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleCopyPin(selectedPin)}
-                className="px-3.5 py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 font-bold rounded-xl text-xs hover:bg-blue-600/30 transition"
+        {activeTab !== 'students' && (
+          <div className="bg-[#131B2E] p-4 rounded-2xl border border-gray-800 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex-1 min-w-[280px]">
+              <label className="block text-xs text-gray-400 mb-1 font-bold">اختر امتحاناً سابقاً لعرضه أو تعديله:</label>
+              <select
+                value={selectedPin}
+                onChange={(e) => handleSelectExam(e.target.value)}
+                className="w-full p-2.5 bg-[#0B0F19] border border-blue-500/40 rounded-xl text-white text-sm font-bold focus:outline-none"
               >
-                📋 نسخ PIN
-              </button>
-              <button
-                onClick={() => handleDeleteExam(selectedPin)}
-                className="px-4 py-2.5 bg-red-600/20 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs hover:bg-red-600/30 transition"
-              >
-                🗑️ حذف الامتحان
-              </button>
+                <option value="">-- اختر امتحاناً ({savedExams.length} امتحانات) --</option>
+                {savedExams.map((exam) => (
+                  <option key={exam.pin} value={exam.pin}>
+                    📌 {exam.title} (PIN: {exam.pin}) - {exam.questions?.length || 0} سؤال - {exam.duration || 10} دقيقة
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
-        </div>
+            {selectedPin && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleCopyPin(selectedPin)}
+                  className="px-3.5 py-2.5 bg-blue-600/20 text-blue-400 border border-blue-500/30 font-bold rounded-xl text-xs hover:bg-blue-600/30 transition"
+                >
+                  📋 نسخ PIN
+                </button>
+                <button
+                  onClick={() => handleDeleteExam(selectedPin)}
+                  className="px-4 py-2.5 bg-red-600/20 text-red-400 border border-red-500/30 font-bold rounded-xl text-xs hover:bg-red-600/30 transition"
+                >
+                  🗑️ حذف الامتحان
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {activeTab === 'create' ? (
           <>
@@ -635,7 +670,7 @@ export default function TeacherPage() {
                   <label className="block text-xs text-gray-400 mb-1">✍️ البرومبت (Prompt)</label>
                   <input
                     type="text"
-                    placeholder="مثال: أسئلة متنوعة عن قواعد اللغة الإنجليزية"
+                    placeholder="مثال: أسئلة اختيار من متعدد عن قواعد اللغة الإنجليزية"
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
                     className="w-full p-2.5 bg-[#0B0F19] border border-gray-700 rounded-xl text-xs text-white"
@@ -688,133 +723,58 @@ export default function TeacherPage() {
               </div>
 
               <div className="space-y-4">
-                {questions.map((q, qIdx) => {
-                  const qType = q.type || 'mcq';
-                  return (
-                    <div key={qIdx} className="p-4 bg-[#0B0F19] rounded-xl border border-gray-800 space-y-3">
-                      <div className="flex flex-wrap justify-between items-center gap-2">
-                        <span className="text-xs text-blue-400 font-bold">سؤال #{qIdx + 1}</span>
-                        
-                        <div className="flex items-center gap-2">
-                          <select
-                            value={qType}
-                            onChange={(e) => {
-                              const newType = e.target.value;
+                {questions.map((q, qIdx) => (
+                  <div key={qIdx} className="p-4 bg-[#0B0F19] rounded-xl border border-gray-800 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-blue-400 font-bold">سؤال #{qIdx + 1}</span>
+                      <button
+                        onClick={() => handleDeleteQuestion(qIdx)}
+                        className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-600/30 transition"
+                      >
+                        🗑️ حذف
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={q.text}
+                      onChange={(e) => {
+                        const newQ = [...questions];
+                        newQ[qIdx] = { ...newQ[qIdx], text: e.target.value };
+                        setQuestions(newQ);
+                      }}
+                      className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-sm text-white font-semibold"
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {q.options.map((opt, oIdx) => (
+                        <div key={oIdx} className="flex items-center gap-2">
+                          <input
+                            type="radio"
+                            name={`correct-${qIdx}`}
+                            checked={q.correctOption === oIdx}
+                            onChange={() => {
                               const newQ = [...questions];
-                              newQ[qIdx] = {
-                                ...newQ[qIdx],
-                                type: newType,
-                                options: newType === 'true_false' ? ['صح', 'خطأ'] : (newQ[qIdx].options || ['', '', '', '']),
-                                correctOption: newType === 'true_false' ? 'صح' : 0,
-                                correctAnswer: newType === 'short_answer' ? (newQ[qIdx].correctAnswer || '') : ''
-                              };
+                              newQ[qIdx] = { ...newQ[qIdx], correctOption: oIdx };
                               setQuestions(newQ);
                             }}
-                            className="p-1.5 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-white focus:outline-none"
-                          >
-                            <option value="mcq">اختيار من متعدد</option>
-                            <option value="true_false">صح وخطأ</option>
-                            <option value="short_answer">إجابة نصية قصيرة</option>
-                          </select>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteQuestion(qIdx)}
-                            className="text-xs bg-red-600/20 text-red-400 border border-red-500/30 px-2 py-1 rounded-lg hover:bg-red-600/30 transition"
-                          >
-                            🗑️ حذف
-                          </button>
-                        </div>
-                      </div>
-
-                      <input
-                        type="text"
-                        value={q.text}
-                        onChange={(e) => {
-                          const newQ = [...questions];
-                          newQ[qIdx] = { ...newQ[qIdx], text: e.target.value };
-                          setQuestions(newQ);
-                        }}
-                        placeholder="نص السؤال..."
-                        className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-sm text-white font-semibold"
-                      />
-
-                      {/* عرض خيارات الإجابة حسب نوع السؤال */}
-                      {qType === 'short_answer' ? (
-                        <div className="space-y-1">
-                          <label className="block text-[11px] text-gray-400">الإجابة الصحيحة النموذجية:</label>
+                            className="accent-green-500 cursor-pointer"
+                          />
                           <input
                             type="text"
-                            value={q.correctAnswer ?? ''}
+                            value={opt}
                             onChange={(e) => {
                               const newQ = [...questions];
-                              newQ[qIdx] = { ...newQ[qIdx], correctAnswer: e.target.value };
+                              const newOptions = [...newQ[qIdx].options];
+                              newOptions[oIdx] = e.target.value;
+                              newQ[qIdx] = { ...newQ[qIdx], options: newOptions };
                               setQuestions(newQ);
                             }}
-                            placeholder="اكتب الإجابة الصحيحة المقبولة للطالب..."
-                            className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-emerald-400 font-medium"
+                            className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-gray-300"
                           />
                         </div>
-                      ) : qType === 'true_false' ? (
-                        <div className="space-y-2">
-                          <label className="block text-[11px] text-gray-400">حدد الإجابة الصحيحة:</label>
-                          <div className="flex gap-4">
-                            {['صح', 'خطأ'].map((opt, oIdx) => {
-                              const isCorrect = String(q.correctAnswer ?? q.correctOption) === opt;
-                              return (
-                                <label key={oIdx} className="flex items-center gap-2 cursor-pointer text-xs text-gray-300">
-                                  <input
-                                    type="radio"
-                                    name={`correct-tf-${qIdx}`}
-                                    checked={isCorrect}
-                                    onChange={() => {
-                                      const newQ = [...questions];
-                                      newQ[qIdx] = { ...newQ[qIdx], correctAnswer: opt, correctOption: opt };
-                                      setQuestions(newQ);
-                                    }}
-                                    className="accent-green-500 cursor-pointer"
-                                  />
-                                  <span className={isCorrect ? 'text-emerald-400 font-bold' : ''}>{opt}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {(q.options || ['', '', '', '']).map((opt, oIdx) => (
-                            <div key={oIdx} className="flex items-center gap-2">
-                              <input
-                                type="radio"
-                                name={`correct-${qIdx}`}
-                                checked={q.correctOption === oIdx}
-                                onChange={() => {
-                                  const newQ = [...questions];
-                                  newQ[qIdx] = { ...newQ[qIdx], correctOption: oIdx };
-                                  setQuestions(newQ);
-                                }}
-                                className="accent-green-500 cursor-pointer"
-                              />
-                              <input
-                                type="text"
-                                value={opt}
-                                onChange={(e) => {
-                                  const newQ = [...questions];
-                                  const newOptions = [...(newQ[qIdx].options || ['', '', '', ''])];
-                                  newOptions[oIdx] = e.target.value;
-                                  newQ[qIdx] = { ...newQ[qIdx], options: newOptions };
-                                  setQuestions(newQ);
-                                }}
-                                placeholder={`الخيار ${oIdx + 1}`}
-                                className="w-full p-2 bg-[#131B2E] border border-gray-700 rounded-lg text-xs text-gray-300"
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      ))}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
 
               <div className="flex flex-wrap gap-3">
@@ -833,7 +793,7 @@ export default function TeacherPage() {
               </div>
             </div>
           </>
-        ) : (
+        ) : activeTab === 'analytics' ? (
           <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-800 pb-3">
               <h2 className="text-lg font-bold text-amber-400">🏆 نتائج وأوائل الطلاب</h2>
@@ -943,12 +903,67 @@ export default function TeacherPage() {
               </div>
             </div>
           </div>
+        ) : (
+          /* تبويب إدارة الطلاب وحذفهم */
+          <div className="bg-[#131B2E] p-6 rounded-2xl border border-gray-800 space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-800 pb-3">
+              <h2 className="text-lg font-bold text-purple-400">👨‍🎓 إدارة الطلاب المسجلين ({studentsList.length})</h2>
+            </div>
+
+            <div className="bg-[#0B0F19] p-3 rounded-xl border border-gray-800">
+              <input
+                type="text"
+                placeholder="🔍 البحث عن طالب مسجل بالاسم..."
+                value={searchRegisteredStudent}
+                onChange={(e) => setSearchRegisteredStudent(e.target.value)}
+                className="w-full bg-transparent text-xs text-white focus:outline-none"
+              />
+            </div>
+
+            <div className="bg-[#0B0F19] p-4 rounded-xl border border-gray-800 space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-gray-800 text-gray-400">
+                      <th className="pb-2">#</th>
+                      <th className="pb-2">اسم الطالب</th>
+                      <th className="pb-2">كلمة المرور المسجلة</th>
+                      <th className="pb-2 text-center">إجراء (حذف الحساب)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800/50">
+                    {filteredRegisteredStudents.length === 0 ? (
+                      <tr>
+                        <td colSpan="4" className="text-center py-6 text-gray-500">لا توجد حسابات طلاب مسجلة حتى الآن.</td>
+                      </tr>
+                    ) : (
+                      filteredRegisteredStudents.map((st, idx) => (
+                        <tr key={st.id || idx} className="hover:bg-gray-900/40 transition">
+                          <td className="py-3 text-gray-400">{idx + 1}</td>
+                          <td className="py-3 font-bold text-white">{st.name}</td>
+                          <td className="py-3 font-mono text-amber-400">{st.password}</td>
+                          <td className="py-3 text-center">
+                            <button
+                              onClick={() => handleDeleteStudentAccount(st)}
+                              className="text-red-400 hover:text-red-300 bg-red-600/10 border border-red-500/20 px-3 py-1 rounded-lg text-xs font-bold transition"
+                            >
+                              🗑️ delete student from database
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
       <footer className="py-4 text-center text-xs text-gray-400 border-t border-gray-800/50 mt-8 space-y-1">
         <p>تحت إشراف: <span className="text-gray-200 font-bold">مستر أشرف كامل</span></p>
-        <p>جميع الحقوق محفوظة © 2024</p>
+        <p>جميع الحقوق محفوظة © 2026</p>
       </footer>
     </div>
   );
