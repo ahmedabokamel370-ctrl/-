@@ -143,7 +143,7 @@ export default function AnalyticsPage() {
 }
 
 // دالة تحليل الأخطاء الشائعة (تم الاحتفاظ بها كما طلبت)
-export function calculateCommonMistakes(questions, submissions) {
+function calculateCommonMistakes(questions, submissions) {
   if (!questions || !submissions || submissions.length === 0) return [];
 
   const questionStats = {};
